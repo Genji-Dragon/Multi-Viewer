@@ -75,7 +75,7 @@ button {
   white-space: nowrap;
 }
 button:hover { background: var(--hover); }
-#layoutBtn, #arrangeBtn, #soundBtn { display: inline-flex; align-items: center; gap: 6px; }
+#layoutBtn, #soundBtn, #mixerBtn { display: inline-flex; align-items: center; gap: 6px; }
 #soundBtn[hidden] { display: none; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
@@ -132,41 +132,124 @@ body.bar-hidden #showBar { display: inline-grid; }
 
 /* ---------- Stage & tiles ---------- */
 #stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-
 .tile {
-  position: absolute;
-  background: #000;
-  overflow: hidden;
-  transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
-}
-.tile iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
-.tile.focused { box-shadow: 0 0 0 2px var(--accent); }
-.tile.drop-target { box-shadow: 0 0 0 3px var(--accent) inset; }
-.tile.drop-target::after { content: ""; position: absolute; inset: 0; background: rgba(124, 92, 255, .18); }
-
-/* "Make big" only applies to the Auto layout */
-#stage.custom .focus-btn { display: none; }
-
-/* Empty spots stay invisible; they only show up as places to drop while dragging */
-.empty-spot { display: none; }
-#stage.dragging .empty-spot {
   position: absolute;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 8px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--muted);
-  border: 2px dashed var(--line);
+  background: #000;
   border-radius: 6px;
+  container: tile / inline-size;
   overflow: hidden;
   transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
 }
-.empty-spot b { color: var(--text); font-weight: 600; }
-#stage.dragging .empty-spot.drop-target { border-color: var(--accent); background: rgba(124, 92, 255, .12); }
+.tile.focused { box-shadow: 0 0 0 2px var(--accent); }
+.tile.drop-target { box-shadow: 0 0 0 3px var(--accent); }
+.tile.drop-target .tile-body::after { content: ""; position: absolute; inset: 0; background: rgba(124, 92, 255, .22); }
+
+/* Title bar: hold it to drag the stream (height must match HEAD in app.js) */
+.tile-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 2px;
+  background: var(--panel);
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.tile-head:active { cursor: grabbing; }
+.grip { display: inline-grid; color: var(--muted); flex: none; }
+.grip svg { width: 16px; height: 16px; }
+.tile-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tile-actions { display: flex; align-items: center; gap: 1px; flex: none; }
+.tile-actions button {
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tile-actions button:hover { background: var(--hover); color: var(--text); }
+.tile-actions svg { width: 15px; height: 15px; }
+/* Volume: mute button, slider and % */
+.vol { display: flex; align-items: center; gap: 3px; flex: none; margin-right: 2px; }
+.vol button {
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.vol button:hover { background: var(--hover); color: var(--text); }
+.vol svg { width: 15px; height: 15px; }
+.vol input[type="range"] {
+  --fill: 26%;
+  width: 72px;
+  height: 4px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--fill), var(--line) var(--fill));
+  cursor: pointer;
+}
+.vol input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 0;
+}
+.vol input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 0;
+}
+.vol-label {
+  min-width: 38px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+}
+.vol.is-muted .vol-label { color: var(--muted); }
+
+/* Narrow tiles: drop the slider (the % stays), then the less useful buttons */
+@container tile (max-width: 380px) {
+  .vol input[type="range"] { display: none; }
+}
+/* Narrow tiles: keep only the most useful buttons */
+@container tile (max-width: 260px) {
+  .tile-actions .extra { display: none; }
+}
+
+.tile-body { position: relative; flex: 1; min-height: 0; }
+.tile-body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+
+/* "Make big" only applies to the Auto layout */
+#stage.custom .focus-btn { display: none; }
 
 /* While dragging, iframes must not swallow the mouse */
 #stage.dragging iframe { pointer-events: none; }
@@ -180,78 +263,6 @@ body.bar-hidden #showBar { display: inline-grid; }
 }
 .tile.no-anim { transition: none !important; }
 .tile.settling { transition: transform .22s ease; }
-
-/* Arrange mode: a cover over each video that can be grabbed anywhere */
-.grab {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 8px;
-  text-align: center;
-  color: #fff;
-  background: rgba(10, 10, 14, .45);
-  border: 2px dashed rgba(255, 255, 255, .35);
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-.grab b { font-size: 16px; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.grab span { font-size: 12px; opacity: .85; }
-.grab:hover { background: rgba(10, 10, 14, .3); border-color: var(--accent); }
-#stage.arranging .grab { display: flex; }
-.tile.lifted .grab { background: rgba(124, 92, 255, .25); }
-
-.tile-bar {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  max-width: calc(100% - 12px);
-  background: rgba(14, 14, 16, .88);
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 7px;
-  opacity: 0;
-  transform: translateY(-3px);
-  transition: opacity .15s, transform .15s;
-  pointer-events: none;
-}
-.tile:hover .tile-bar, .tile-bar:focus-within, #stage.dragging .tile-bar { opacity: 1; transform: none; pointer-events: auto; }
-
-.tile-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px 3px 6px;
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-}
-.tile-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile-name:active { cursor: grabbing; }
-.tile-bar button {
-  display: inline-grid;
-  place-items: center;
-  padding: 4px;
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: #d6d6dc;
-}
-.tile-bar button:hover { background: rgba(255, 255, 255, .12); color: #fff; }
-.tile-bar button.on { color: var(--accent); }
-.tile-bar svg { width: 15px; height: 15px; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
 .dot.tw { background: var(--twitch); }
@@ -360,6 +371,7 @@ code {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.menu:not(.placing) .lay { cursor: pointer; }
 .lay.current, .lay-auto.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .lay.disabled { opacity: .35; }
 .lay .zone {
@@ -384,3 +396,93 @@ code {
   #addForm { flex-basis: 100%; }
   .actions { margin-left: auto; flex-wrap: wrap; }
 }
+
+/* ---------- Volume mixer (like Windows' volume mixer) ---------- */
+.menu.mixer { width: min(360px, calc(100vw - 16px)); }
+.mixer .menu-head { margin-bottom: 10px; }
+button.small { padding: 3px 9px; font-size: 12px; }
+button.small:disabled { opacity: .5; cursor: default; }
+.mix-rows { display: grid; gap: 4px; }
+.mix-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 6px;
+  border-radius: 8px;
+}
+.mix-row:hover { background: var(--panel-2); }
+.mix-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+}
+.mix-badge.tw { background: var(--twitch); }
+.mix-badge.k { background: var(--kick); color: #0b0b0b; }
+.mix-badge.yt { background: var(--youtube); font-size: 11px; }
+.mix-badge.s { background: var(--soop); }
+.mix-main { flex: 1; min-width: 0; }
+.mix-name {
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mix-note { font-size: 11px; color: var(--muted); }
+.mixer .vol { margin: 0; gap: 6px; }
+.mixer .vol input[type="range"] { flex: 1; width: auto; height: 4px; }
+.mixer .vol input[type="range"]::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--panel-2), 0 0 0 5px var(--line);
+}
+.mixer .vol input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--panel-2), 0 0 0 5px var(--line);
+}
+.mixer .vol-label { min-width: 44px; font-size: 12px; }
+
+/* Muted: the slider keeps its level but fades */
+.vol.is-muted input[type="range"] { opacity: .45; }
+
+/* ---------- Snap bar (shown while dragging, like Windows snap layouts) ---------- */
+.snap-bar {
+  position: fixed;
+  z-index: 45;
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  pointer-events: none;     /* the dragged stream keeps the mouse; spots are found by position */
+}
+.snap-bar[hidden] { display: none; }
+.snap-title { margin-bottom: 6px; font-size: 11px; color: var(--muted); text-align: center; }
+.snap-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.snap-card { width: 84px; flex: none; }
+.snap-bar .zone.hot { background: var(--accent); }
+
+/* The part of the screen the stream would take */
+.snap-preview {
+  position: absolute;
+  z-index: 9;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(124, 92, 255, .28);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  transition: left .12s ease, top .12s ease, width .12s ease, height .12s ease;
+}
+.snap-preview[hidden] { display: none; }
+#stage.snapping .tile.lifted { opacity: .5; }

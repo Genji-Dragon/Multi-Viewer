@@ -198,15 +198,15 @@
   let streams = [];        // every open stream (its order is the Auto layout order)
   let focusKey = null;     // the big one in Auto layout
   let layoutId = 'auto';   // 'auto' or an id from LAYOUTS
-  let slots = [];          // custom layout only: stream key (or null) for each spot
-  let fillScreen = false;
+  let slots = [];          // custom layout only: the stream key in each spot (one per stream)
+  let fillScreen = true;   // stretch tiles over the whole screen instead of keeping 16:9
   const keyOf = (s) => `${s.t}:${s.id}`;
   const isCustom = () => layoutId !== 'auto';
   const byKey = (key) => streams.find((s) => s.key === key);
 
   /** Streams in the order they appear on screen. */
   function visualOrder() {
-    return isCustom() ? slots.filter(Boolean) : streams.map((s) => s.key);
+    return isCustom() ? [...slots] : streams.map((s) => s.key);
   }
 
   // Browsers only allow sound after the person has clicked or typed on the page.
@@ -220,33 +220,34 @@
       if (!quiet) toast(`${TYPES[stream.t].label} ${stream.id} is already open`);
       return null;
     }
-    const s = { ...stream, key, muted: !sound, waitingForClick: !sound };
+    const s = { ...stream, key, volume: VOLUME, muted: !sound, waitingForClick: !sound };
     s.el = buildTile(s);
     streams.push(s);
     stage.appendChild(s.el);
     return s;
   }
 
-  /** Put a newly added stream into the first empty spot. Returns false if there was none. */
-  function placeNew(key) {
-    if (!isCustom()) return true;
-    const i = slots.indexOf(null);
-    if (i < 0) return false;
-    slots[i] = key;
-    return true;
+  /** Back to Auto, keeping the current on-screen order (anything new goes last). */
+  function toAuto() {
+    if (!isCustom()) return;
+    const order = visualOrder();
+    const rank = (k) => { const i = order.indexOf(k); return i < 0 ? Infinity : i; };
+    streams.sort((a, b) => rank(a.key) - rank(b.key));
+    layoutId = 'auto';
+    slots = [];
   }
 
   function remove(key) {
     const s = byKey(key);
     if (!s) return;
+    toAuto();   // a fixed layout no longer fits one stream fewer
     s.el.remove();
     streams = streams.filter((x) => x !== s);
     if (focusKey === key) focusKey = null;
-    if (isCustom()) slots = slots.map((k) => (k === key ? null : k));
     update();
   }
 
-  /** Drag & drop: put fromKey where toKey is (swap in a custom layout). */
+  /** Drag & drop: put fromKey where toKey is (swap in a fixed layout). */
   function move(fromKey, toKey) {
     if (fromKey === toKey) return;
     if (isCustom()) {
@@ -263,51 +264,28 @@
     update();
   }
 
-  /** Drag & drop onto an empty spot in a custom layout. */
-  function moveToSlot(key, index) {
-    const from = slots.indexOf(key);
-    if (from < 0 || slots[index]) return;
-    slots[from] = null;
-    slots[index] = key;
-    update();
-  }
-
   /**
    * Switch layout. With placeKey + zone, that stream goes into that exact spot
    * (swapping with whatever was there when the layout stays the same).
    */
   function setLayout(id, { placeKey = null, zone = -1 } = {}) {
-    const order = visualOrder();
     if (id === 'auto') {
-      if (!isCustom()) return;
-      // Keep the on-screen order; anything not on screen yet goes last
-      const rank = (k) => { const i = order.indexOf(k); return i < 0 ? Infinity : i; };
-      streams.sort((a, b) => rank(a.key) - rank(b.key));
-      layoutId = 'auto';
-      slots = [];
+      toAuto();
       update();
       return;
     }
     const L = LAYOUT_BY_ID[id];
     if (!L) return;
-    if (order.length > L.zones.length) {
-      toast(`That layout has ${L.zones.length} spots but you have ${order.length} streams`, true);
-      return;
-    }
+    const order = visualOrder();
+    if (order.length !== L.zones.length) return;
     let next;
     if (placeKey && id === layoutId) {
       next = [...slots];
       const from = next.indexOf(placeKey);
       [next[from], next[zone]] = [next[zone], next[from]];
     } else {
-      next = L.zones.map(() => null);
-      if (placeKey) next[zone] = placeKey;
-      let i = 0;
-      for (const k of order) {
-        if (k === placeKey) continue;
-        while (next[i]) i++;
-        next[i] = k;
-      }
+      next = order.filter((k) => k !== placeKey);
+      if (placeKey) next.splice(zone, 0, placeKey);
     }
     layoutId = id;
     slots = next;
@@ -324,8 +302,9 @@
     update();
   }
 
-  // ---------- Tiles ----------
+  // ---------- Icons ----------
   const ICONS = {
+    grip: '<path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" stroke-width="3.2"/>',
     focus: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
     unfocus: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
     layout: '<rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/>',
@@ -361,44 +340,89 @@
     const api = TYPES[s.t].api;
     if (api === 'yt') {
       const cmd = (func, args = []) => post(s, JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }));
+      // "listening" also makes YouTube report volume changes back to this page
       post(s, JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }));
-      // Volume is set even while muted, so unmuting inside the player also gives VOLUME
-      cmd('setVolume', [VOLUME]);
-      cmd(s.muted ? 'mute' : 'unMute');
+      // Volume is set even while muted, so unmuting inside the player keeps this level.
+      // Unmute comes first: YouTube raises very low volumes to 5% when unmuting.
+      if (s.muted) {
+        cmd('setVolume', [s.volume]);
+        cmd('mute');
+      } else {
+        cmd('unMute');
+        cmd('setVolume', [s.volume]);
+      }
     } else if (api === 'tw') {
       // Twitch's embed commands: 10 = set muted, 11 = set volume (0 to 1)
       const cmd = (eventName, params) => post(s, { eventName, params, namespace: 'twitch-embed-player-proxy' });
-      cmd(11, VOLUME / 100);
+      cmd(11, s.volume / 100);
       cmd(10, s.muted);
     }
   }
 
   // Players finish starting up at different times, so the sound settings are sent
-  // a few times after loading and again when the player says it's ready. After
-  // that, whatever the person sets inside the player is left alone.
+  // a few times after loading and again when the player says it's ready, until the
+  // player reports the volume we asked for. After that, changes made inside the
+  // player are followed instead (so the % on the title bar stays right).
   function onFrameLoad(s) {
     if (!TYPES[s.t].api) return;
+    s.confirmed = false;
     s.audioUntil = Date.now() + 15000;
     s.readySeen = new Set();
     clearTimeout(s.audioTimer);
     let i = 0;
     const delays = [600, 1500, 3000, 6000];
     const tick = () => {
-      if (!byKey(s.key)) return;
+      if (!byKey(s.key) || s.confirmed) return;
       sendAudio(s);
       if (++i < delays.length) s.audioTimer = setTimeout(tick, delays[i] - delays[i - 1]);
     };
     s.audioTimer = setTimeout(tick, delays[0]);
   }
 
+  /** The player told us its current volume (0-100) and/or muted state. */
+  function playerReported(s, vol, muted) {
+    if (!s.confirmed) {
+      if (vol !== null && Math.abs(vol - s.volume) <= 1) {
+        s.confirmed = true;              // our setting took effect; stop re-sending it
+        s.audioUntil = 0;
+        clearTimeout(s.audioTimer);
+      }
+      return;
+    }
+    // Right after a change made here, the player may still report its older level
+    if (Date.now() < (s.localUntil || 0)) return;
+    // A volume of 0 set inside the player counts as muted (the sliders here go down to 1%)
+    if (vol !== null && Math.round(vol) < MIN_VOLUME) { vol = null; muted = true; }
+    let changed = false;
+    if (vol !== null && Math.round(vol) !== s.volume) { s.volume = Math.round(vol); changed = true; }
+    if (muted !== null && muted !== s.muted) { s.muted = muted; changed = true; }
+    if (changed) {
+      if (!s.muted) s.waitingForClick = false;
+      refreshVolume(s);
+      refreshSoundPrompt();
+    }
+  }
+
   window.addEventListener('message', (e) => {
     const s = streams.find((x) => x.frame.contentWindow === e.source);
-    if (!s || !(Date.now() < s.audioUntil)) return;
+    if (!s) return;
     let d = e.data;
     if (typeof d === 'string') {
       try { d = JSON.parse(d); } catch { return; }
     }
     if (!d || typeof d !== 'object') return;
+
+    let vol = null, muted = null;
+    if ((d.event === 'infoDelivery' || d.event === 'initialDelivery') && d.info) {
+      if (typeof d.info.volume === 'number') vol = d.info.volume;
+      if (typeof d.info.muted === 'boolean') muted = d.info.muted;
+    } else if (d.namespace === 'twitch-embed-player-proxy' && d.eventName === 'UPDATE_STATE' && d.params) {
+      if (typeof d.params.volume === 'number') vol = d.params.volume * 100;
+      if (typeof d.params.muted === 'boolean') muted = d.params.muted;
+    }
+    if (vol !== null || muted !== null) playerReported(s, vol, muted);
+
+    if (!(Date.now() < s.audioUntil)) return;
     const ev = d.event === 'onReady' ? 'yt-ready'
       : d.namespace === 'twitch-embed' && ['ready', 'video.ready', 'playing'].includes(d.eventName) ? d.eventName
       : null;
@@ -411,24 +435,73 @@
   function setSound(s, on) {
     s.muted = !on;
     s.waitingForClick = false;
-    if (TYPES[s.t].api) {
-      s.audioUntil = Date.now() + 15000;
-      s.readySeen = new Set();
-      sendAudio(s);
-    } else {
-      s.frame.src = embedUrl(s);   // Kick only reads this when loading
-    }
-    refreshMuteButton(s);
+    if (on && s.volume < MIN_VOLUME) s.volume = VOLUME;
+    s.localUntil = Date.now() + 1000;
+    if (TYPES[s.t].api) sendAudio(s);
+    else s.frame.src = embedUrl(s);   // Kick only reads this when loading
+    refreshVolume(s);
     refreshSoundPrompt();
   }
 
-  function refreshMuteButton(s) {
-    const b = s.muteBtn;
-    if (!b) return;
+  /** From a volume slider or the mouse wheel (YouTube and Twitch only): 1% to 100%. */
+  const MIN_VOLUME = 1;
+  function setVolumeLevel(s, v) {
+    s.volume = Math.max(MIN_VOLUME, Math.min(100, Math.round(v)));
+    s.muted = false;               // muting is only done with the speaker button
+    s.localUntil = Date.now() + 1000;
+    s.waitingForClick = false;
+    sendAudio(s);
+    refreshVolume(s);
+    refreshSoundPrompt();
+  }
+
+  /**
+   * A volume control: mute button, plus a slider and % for players that accept
+   * volume commands (YouTube, Twitch). Used on the title bar and in the mixer;
+   * every copy is kept in sync by refreshVolume. Mouse wheel over it works too.
+   */
+  function makeVolumeControl(s, { inMixer = false } = {}) {
+    const ui = { inMixer, box: document.createElement('div') };
+    ui.box.className = 'vol';
+    ui.btn = iconButton('muted', '', () => setSound(s, s.muted));
+    ui.box.append(ui.btn);
+    if (TYPES[s.t].api) {
+      ui.slider = document.createElement('input');
+      ui.slider.type = 'range';
+      ui.slider.min = String(MIN_VOLUME);
+      ui.slider.max = '100';
+      ui.slider.step = '1';
+      ui.slider.setAttribute('aria-label', `Volume for ${s.id}`);
+      ui.slider.addEventListener('input', () => setVolumeLevel(s, Number(ui.slider.value)));
+      ui.label = document.createElement('span');
+      ui.label.className = 'vol-label';
+      ui.box.append(ui.slider, ui.label);
+      ui.box.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        setVolumeLevel(s, s.volume + (e.deltaY < 0 ? 5 : -5));
+      }, { passive: false });
+    }
+    (s.volUIs ||= []).push(ui);
+    refreshVolume(s);
+    return ui.box;
+  }
+
+  function refreshVolume(s) {
+    // Where the slider's colored part ends (the slider runs from 1 to 100)
+    const fill = s.muted ? 0 : ((s.volume - MIN_VOLUME) / (100 - MIN_VOLUME)) * 100;
     const reloads = TYPES[s.t].api ? '' : ' (reloads player)';
-    b.innerHTML = svg(s.muted ? 'muted' : 'sound');
-    b.title = (s.muted ? 'Turn sound on' : 'Mute') + reloads;
-    b.setAttribute('aria-label', b.title);
+    for (const ui of s.volUIs || []) {
+      ui.btn.innerHTML = svg(s.muted ? 'muted' : 'sound');
+      ui.btn.title = (s.muted ? 'Turn sound on' : 'Mute') + reloads;
+      ui.btn.setAttribute('aria-label', ui.btn.title);
+      ui.box.classList.toggle('is-muted', s.muted);
+      if (ui.slider) {
+        ui.slider.value = String(s.volume);
+        ui.slider.style.setProperty('--fill', `${fill}%`);
+        ui.label.textContent = s.muted ? 'Muted' : `${s.volume}%`;
+      }
+    }
+    if (!mixer.hidden) refreshMuteAll();
   }
 
   const soundBtn = $('#soundBtn');
@@ -444,33 +517,87 @@
   document.addEventListener('keydown', turnOnWaitingSound, true);
 
   // ---------- Moving streams by dragging ----------
-  // Press and hold a stream's name (or anywhere on it in Arrange mode), drag it
-  // over another stream to swap places, or over an empty spot to move it there.
+  // Hold a stream's title bar and drag it:
+  //  - over another stream to swap places, or
+  //  - over a spot in the snap bar at the top (like Windows snap layouts) to put
+  //    it there; the part of the screen it would take lights up first.
+  // (The video itself can't be grabbed: clicks there go to the player.)
   // Tiles never move inside the page (that would reload the players); only their
   // position on screen changes.
   let drag = null;
+  const snapBar = $('#snapBar');
+  const snapGrid = $('#snapGrid');
+  const snapPreview = document.createElement('div');
+  snapPreview.className = 'snap-preview';
+  snapPreview.hidden = true;
+  stage.appendChild(snapPreview);
+
+  const inside = (el, x, y) => {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
 
   function dropTargetAt(x, y, dragged) {
-    const inside = (el) => {
-      const r = el.getBoundingClientRect();
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    };
-    for (const s of streams) if (s !== dragged && inside(s.el)) return { el: s.el, key: s.key };
-    for (const el of emptySpots) if (inside(el)) return { el, index: Number(el.dataset.index) };
+    for (const s of streams) if (s !== dragged && inside(s.el, x, y)) return s;
     return null;
   }
 
+  /** Fill the snap bar with the layouts that have one spot per stream. */
+  function showSnapBar() {
+    snapGrid.textContent = '';
+    const zones = [];
+    for (const L of LAYOUTS) {
+      if (L.zones.length !== streams.length) continue;
+      const card = document.createElement('div');
+      card.className = 'lay snap-card';
+      if (L.id === layoutId) card.classList.add('current');
+      L.zones.forEach((z, i) => {
+        const el = document.createElement('div');
+        el.className = 'zone';
+        el.style.cssText = zoneStyle(z);
+        card.appendChild(el);
+        zones.push({ el, id: L.id, zone: i });
+      });
+      snapGrid.appendChild(card);
+    }
+    if (!zones.length) return [];
+    snapBar.hidden = false;
+    // Centered at the top of the video area
+    const st = stage.getBoundingClientRect();
+    snapBar.style.top = `${st.top + 8}px`;
+    snapBar.style.left = `${st.left + (st.width - snapBar.offsetWidth) / 2}px`;
+    return zones;
+  }
+
+  function hideSnap() {
+    snapBar.hidden = true;
+    snapPreview.hidden = true;
+    stage.classList.remove('snapping');
+  }
+
+  /** Light up the part of the screen this spot would take. */
+  function previewSnap(z) {
+    if (!z) {
+      snapPreview.hidden = true;
+      stage.classList.remove('snapping');
+      return;
+    }
+    const r = zoneRects(stage.clientWidth, stage.clientHeight, LAYOUT_BY_ID[z.id])[z.zone];
+    setRect(snapPreview, r);
+    snapPreview.hidden = false;
+    stage.classList.add('snapping');
+  }
+
   function endDrag(drop) {
-    const { s, target } = drag;
+    const { s, target, snap } = drag;
     drag = null;
     target?.el.classList.remove('drop-target');
+    hideSnap();
     const before = s.el.getBoundingClientRect();
     s.el.classList.add('no-anim');           // jump straight to the new spot, then glide in
     stage.classList.remove('dragging');
-    if (drop && target) {
-      if (target.key) move(s.key, target.key);
-      else moveToSlot(s.key, target.index);
-    }
+    if (drop && snap) setLayout(snap.id, { placeKey: s.key, zone: snap.zone });
+    else if (drop && target) move(s.key, target.key);
     s.el.style.transform = 'none';
     const after = s.el.getBoundingClientRect();
     s.el.style.transform = `translate(${before.left - after.left}px, ${before.top - after.top}px)`;
@@ -483,10 +610,10 @@
 
   function makeDragHandle(handle, s) {
     handle.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || drag) return;
+      if (e.button !== 0 || drag || e.target.closest('button, input')) return;
       e.preventDefault();
       try { handle.setPointerCapture(e.pointerId); } catch {}
-      drag = { s, handle, x0: e.clientX, y0: e.clientY, active: false, target: null };
+      drag = { s, handle, x0: e.clientX, y0: e.clientY, active: false, target: null, snap: null, zones: [] };
     });
     handle.addEventListener('pointermove', (e) => {
       if (!drag || drag.handle !== handle) return;
@@ -495,12 +622,24 @@
         if (Math.hypot(dx, dy) < 5) return;
         drag.active = true;
         closeMenu();
+        if (!mixer.hidden) closeMixer();
         stage.classList.add('dragging');
         s.el.classList.add('lifted');
+        drag.zones = showSnapBar();
       }
       s.el.style.transform = `translate(${dx}px, ${dy}px)`;
-      const t = dropTargetAt(e.clientX, e.clientY, s);
-      if (t?.el !== drag.target?.el) {
+
+      // Over a spot in the snap bar?
+      const z = drag.zones.find((zz) => inside(zz.el, e.clientX, e.clientY)) || null;
+      if (z !== drag.snap) {
+        drag.snap?.el.classList.remove('hot');
+        z?.el.classList.add('hot');
+        drag.snap = z;
+        previewSnap(z);
+      }
+      // Otherwise, over another stream?
+      const t = z || inside(snapBar, e.clientX, e.clientY) ? null : dropTargetAt(e.clientX, e.clientY, s);
+      if (t !== drag.target) {
         drag.target?.el.classList.remove('drop-target');
         t?.el.classList.add('drop-target');
         drag.target = t;
@@ -517,12 +656,55 @@
   }
 
   // ---------- Building a tile ----------
+  // Each tile is a title bar (drag handle + buttons) above the player.
+  const HEAD = 28;   // title bar height in px (matches .tile-head in style.css)
+
   function buildTile(s) {
     const type = TYPES[s.t];
     const el = document.createElement('div');
     el.className = 'tile';
     el.dataset.key = s.key;
 
+    const head = document.createElement('div');
+    head.className = 'tile-head';
+    head.title = 'Hold and drag to move';
+
+    const grip = document.createElement('span');
+    grip.className = 'grip';
+    grip.innerHTML = svg('grip');
+    const dot = document.createElement('span');
+    dot.className = `dot ${type.dot}`;
+    const name = document.createElement('span');
+    name.className = 'tile-name';
+    name.textContent = s.id;
+    head.append(grip, dot, name);
+
+    const actions = document.createElement('div');
+    actions.className = 'tile-actions';
+
+    const layoutBtn = iconButton('layout', 'Choose this stream\'s spot', () => openMenu(layoutBtn, s.key));
+    actions.append(layoutBtn);
+
+    const focusBtn = iconButton('focus', 'Make big', () => {
+      focusKey = focusKey === s.key ? null : s.key;
+      update();
+    });
+    focusBtn.classList.add('focus-btn');
+    actions.append(focusBtn);
+
+    // Volume (the other buttons are added after it)
+    if (type.mute) head.append(makeVolumeControl(s));
+
+    const reloadBtn = iconButton('reload', 'Reload', () => { frame.src = embedUrl(s); });
+    const openBtn = iconButton('open', `Open on ${type.label.split(' ')[0]}`, () => window.open(type.open(s.id), '_blank', 'noopener'));
+    reloadBtn.classList.add('extra');   // hidden on narrow tiles
+    openBtn.classList.add('extra');
+    actions.append(reloadBtn, openBtn, iconButton('close', 'Remove', () => remove(s.key)));
+    head.append(actions);
+    makeDragHandle(head, s);
+
+    const body = document.createElement('div');
+    body.className = 'tile-body';
     const frame = document.createElement('iframe');
     frame.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
@@ -530,64 +712,23 @@
     frame.addEventListener('load', () => onFrameLoad(s));
     frame.src = embedUrl(s);
     s.frame = frame;
+    body.append(frame);
 
-    // Covers the video in Arrange mode so the whole stream can be grabbed
-    const grab = document.createElement('div');
-    grab.className = 'grab';
-    const grabName = document.createElement('b');
-    grabName.textContent = s.id;
-    const grabHint = document.createElement('span');
-    grabHint.textContent = 'Hold and drag to move';
-    grab.append(grabName, grabHint);
-    makeDragHandle(grab, s);
-
-    const bar = document.createElement('div');
-    bar.className = 'tile-bar';
-
-    const name = document.createElement('div');
-    name.className = 'tile-name';
-    name.title = 'Hold and drag to move';
-    const dot = document.createElement('span');
-    dot.className = `dot ${type.dot}`;
-    const label = document.createElement('span');
-    label.textContent = s.id;
-    name.append(dot, label);
-    makeDragHandle(name, s);
-    bar.append(name);
-
-    const layoutBtn = iconButton('layout', 'Choose this stream\'s spot', () => openMenu(layoutBtn, s.key));
-    bar.append(layoutBtn);
-
-    const focusBtn = iconButton('focus', 'Make big', () => {
-      focusKey = focusKey === s.key ? null : s.key;
-      update();
-    });
-    focusBtn.classList.add('focus-btn');
-    bar.append(focusBtn);
-
-    if (type.mute) {
-      s.muteBtn = iconButton('muted', '', () => setSound(s, s.muted));
-      refreshMuteButton(s);
-      bar.append(s.muteBtn);
-    }
-
-    bar.append(
-      iconButton('reload', 'Reload', () => { frame.src = embedUrl(s); }),
-      iconButton('open', `Open on ${type.label.split(' ')[0]}`, () => window.open(type.open(s.id), '_blank', 'noopener')),
-      iconButton('close', 'Remove', () => remove(s.key)),
-    );
-
-    el.append(frame, grab, bar);
+    el.append(head, body);
     return el;
   }
 
   // ---------- Positioning ----------
+  // Tile height = video height + title bar.
+  const tileH = (w) => w / AR + HEAD;
+
+  /** Pick columns so each video gets as big as possible. */
   function bestGrid(n, W, H) {
     let best = null;
     for (let cols = 1; cols <= n; cols++) {
       const rows = Math.ceil(n / cols);
-      const w = Math.min((W - GAP * (cols - 1)) / cols, ((H - GAP * (rows - 1)) / rows) * AR);
-      if (!best || w > best.w + 0.5) best = { cols, rows, w, h: w / AR };
+      const w = Math.min((W - GAP * (cols - 1)) / cols, ((H - GAP * (rows - 1)) / rows - HEAD) * AR);
+      if (!best || w > best.w + 0.5) best = { cols, rows, w, h: tileH(w) };
     }
     return best;
   }
@@ -596,6 +737,18 @@
     const n = keys.length;
     if (!n || W <= 0 || H <= 0) return;
     const g = bestGrid(n, W, H);
+    if (fillScreen) {
+      // Every row stretches to the full width, rows share the full height
+      const h = (H - GAP * (g.rows - 1)) / g.rows;
+      keys.forEach((k, i) => {
+        const r = Math.floor(i / g.cols);
+        const c = i % g.cols;
+        const inRow = Math.min(g.cols, n - r * g.cols);
+        const w = (W - GAP * (inRow - 1)) / inRow;
+        out.set(k, { x: x + c * (w + GAP), y: y + r * (h + GAP), w, h });
+      });
+      return;
+    }
     const top = y + (H - (g.rows * g.h + (g.rows - 1) * GAP)) / 2;
     keys.forEach((k, i) => {
       const r = Math.floor(i / g.cols);
@@ -606,12 +759,13 @@
     });
   }
 
-  function fit(W, H, aspect = AR) {
-    const w = Math.min(W, H * aspect);
-    return { w, h: w / aspect };
+  /** Largest box of this shape (width / video height) that fits. */
+  function fit(W, H, aspect = AR, head = HEAD) {
+    const w = Math.min(W, (H - head) * aspect);
+    return { w, h: w / aspect + head };
   }
 
-  /** Auto layout: equal 16:9 tiles, or one big + the rest in a strip. */
+  /** Auto layout: equal tiles, or one big + the rest in a strip. */
   function autoRects(W, H) {
     const out = new Map();
     const keys = streams.map((s) => s.key);
@@ -620,24 +774,28 @@
       return out;
     }
     const rest = keys.filter((k) => k !== focusKey);
-    // Big one on the left with a column on the right, or on top with a row below:
-    // whichever leaves the big one more room.
-    const a = fit(W * 0.78, H);
-    const b = fit(W, H * 0.75);
-    if (a.w >= b.w) {
-      out.set(focusKey, { x: 0, y: (H - a.h) / 2, ...a });
-      placeGrid(rest, a.w + GAP, 0, W - a.w - GAP, H, out);
+    // Big one on the left with a column on the right on wide screens,
+    // on top with a row below on tall ones.
+    const wide = W / H >= AR;
+    let main;
+    if (fillScreen) {
+      main = wide ? { w: Math.min((H - HEAD) * AR, W * 0.8), h: H } : { w: W, h: Math.min(tileH(W), H * 0.8) };
     } else {
-      out.set(focusKey, { x: (W - b.w) / 2, y: 0, ...b });
-      placeGrid(rest, 0, b.h + GAP, W, H - b.h - GAP, out);
+      main = wide ? fit(W * 0.78, H) : fit(W, H * 0.75);
+    }
+    if (wide) {
+      out.set(focusKey, { x: 0, y: (H - main.h) / 2, ...main });
+      placeGrid(rest, main.w + GAP, 0, W - main.w - GAP, H, out);
+    } else {
+      out.set(focusKey, { x: (W - main.w) / 2, y: 0, ...main });
+      placeGrid(rest, 0, main.h + GAP, W, H - main.h - GAP, out);
     }
     return out;
   }
 
-  /** Custom layout: one rect per spot (index), whether filled or empty. */
-  function zoneRects(W, H) {
-    const L = LAYOUT_BY_ID[layoutId];
-    const box = fillScreen ? { w: W, h: H } : fit(W, H, L.aspect);
+  /** Fixed layout: one rect per spot. */
+  function zoneRects(W, H, L = LAYOUT_BY_ID[layoutId]) {
+    const box = fillScreen ? { w: W, h: H } : fit(W, H, L.aspect, 0);
     const bx = (W - box.w) / 2, by = (H - box.h) / 2;
     const half = GAP / 2;
     return L.zones.map(([x, y, w, h]) => ({
@@ -657,34 +815,15 @@
     });
   }
 
-  let emptySpots = [];
-
-  function emptySpot(index) {
-    const el = document.createElement('div');
-    el.className = 'empty-spot';
-    el.innerHTML = '<b>Empty spot</b><span>Drop here</span>';
-    el.dataset.index = index;
-    return el;
-  }
-
   function layout() {
     const W = stage.clientWidth;
     const H = stage.clientHeight;
-    emptySpots.forEach((el) => el.remove());
-    emptySpots = [];
     stage.classList.toggle('custom', isCustom());
 
     if (isCustom()) {
       zoneRects(W, H).forEach((r, i) => {
         const s = byKey(slots[i]);
-        if (s) {
-          setRect(s.el, r);
-        } else {
-          const el = emptySpot(i);
-          setRect(el, r);
-          stage.appendChild(el);
-          emptySpots.push(el);
-        }
+        if (s) setRect(s.el, r);
       });
     } else {
       const rects = autoRects(W, H);
@@ -702,10 +841,12 @@
   }
 
   // ---------- Layout menu ----------
+  // Only layouts with exactly one spot per stream are offered.
   const menu = $('#layoutMenu');
   const menuTitle = $('#layoutMenuTitle');
   const menuHint = $('#layoutMenuHint');
   const layoutGrid = $('#layoutGrid');
+  const layoutNone = $('#layoutNone');
   const fillToggle = $('#fillToggle');
   let menuKey = null;      // which stream the menu is placing, or null for "whole layout"
   let menuAnchor = null;
@@ -734,6 +875,12 @@
         });
         card.appendChild(b);
       });
+      // Clicking between the spots still picks the layout (not when placing one stream)
+      card.addEventListener('click', (e) => {
+        if (menuKey || e.target.closest('.zone')) return;
+        closeMenu();
+        setLayout(L.id);
+      });
       layoutGrid.appendChild(card);
     }
   }
@@ -745,20 +892,24 @@
     menuTitle.textContent = name ? `Move ${name} to…` : 'Layout';
     menuHint.textContent = name
       ? 'Click the spot where this stream should go.'
-      : 'Pick a layout. Then use a stream\'s layout button to choose its exact spot, or drag names to swap.';
+      : 'Pick a layout. Then drag streams by their title bar to swap places.';
     $('#autoLayout').classList.toggle('current', !isCustom());
     $('#autoLayout').hidden = !!menuKey;
+    let shown = 0;
     layoutGrid.querySelectorAll('.lay').forEach((card) => {
       const L = LAYOUT_BY_ID[card.dataset.id];
-      const tooSmall = L.zones.length < n;
-      card.classList.toggle('disabled', tooSmall);
+      const fits = L.zones.length === n;
+      card.hidden = !fits;
+      if (fits) shown++;
       card.classList.toggle('current', L.id === layoutId);
-      card.title = tooSmall ? `Only ${L.zones.length} spots (you have ${n} streams)` : '';
       card.querySelectorAll('.zone').forEach((z, i) => {
-        z.disabled = tooSmall;
         z.classList.toggle('here', !!menuKey && L.id === layoutId && slots[i] === menuKey);
       });
     });
+    layoutNone.hidden = shown > 0;
+    layoutNone.textContent = n < 2
+      ? 'Add another stream to see layouts.'
+      : `There are no layouts for ${n} streams, so Auto arranges them.`;
     fillToggle.checked = fillScreen;
   }
 
@@ -775,12 +926,13 @@
 
   function openMenu(anchor, key = null) {
     if (!menu.hidden && menuAnchor === anchor) return closeMenu();
+    if (!mixer.hidden) closeMixer();
     menuAnchor = anchor;
     menuKey = key;
     refreshMenu();
     menu.hidden = false;
     positionMenu();
-    menu.querySelector('.zone:not(:disabled), #autoLayout:not([hidden])')?.focus({ preventScroll: true });
+    menu.querySelector('.lay:not([hidden]) .zone, #autoLayout:not([hidden])')?.focus({ preventScroll: true });
   }
 
   function closeMenu() {
@@ -794,7 +946,7 @@
   $('#autoLayout').addEventListener('click', () => { closeMenu(); setLayout('auto'); });
   fillToggle.addEventListener('change', () => {
     fillScreen = fillToggle.checked;
-    try { localStorage.setItem('mv-fill', fillScreen ? '1' : ''); } catch {}
+    try { localStorage.setItem('mv-fill', fillScreen ? '1' : '0'); } catch {}
     layout();
   });
   document.addEventListener('pointerdown', (e) => {
@@ -803,15 +955,100 @@
   // Clicking into a video moves focus to its frame, which the page sees as a blur
   window.addEventListener('blur', () => { if (!menu.hidden) closeMenu(); });
 
+  // ---------- Volume mixer ----------
+  // One row per stream (like Windows' volume mixer). The sliders are the same
+  // controls as on the title bars, so both always show the same level.
+  const mixer = $('#mixer');
+  const mixerBtn = $('#mixerBtn');
+  const mixerRows = $('#mixerRows');
+  const mixerNote = $('#mixerNote');
+  const muteAllBtn = $('#muteAllBtn');
+  const BADGE = { tw: 'T', k: 'K', yt: '▶', s: 'S' };
+
+  function buildMixerRows() {
+    for (const s of streams) s.volUIs = (s.volUIs || []).filter((ui) => !ui.inMixer);
+    mixerRows.textContent = '';
+    for (const s of visualOrder().map(byKey)) {
+      const type = TYPES[s.t];
+      const row = document.createElement('div');
+      row.className = 'mix-row';
+      const badge = document.createElement('span');
+      badge.className = `mix-badge ${type.dot}`;
+      badge.textContent = BADGE[type.dot];
+      badge.title = type.label;
+      const main = document.createElement('div');
+      main.className = 'mix-main';
+      const name = document.createElement('div');
+      name.className = 'mix-name';
+      name.textContent = s.id;
+      main.append(name);
+      if (type.mute) {
+        main.append(makeVolumeControl(s, { inMixer: true }));
+      }
+      if (!type.api) {
+        const note = document.createElement('div');
+        note.className = 'mix-note';
+        note.textContent = `Set the volume inside the ${type.label.split(' ')[0]} player`;
+        main.append(note);
+      }
+      row.append(badge, main);
+      mixerRows.append(row);
+    }
+    if (!streams.length) {
+      const none = document.createElement('p');
+      none.className = 'menu-hint';
+      none.textContent = 'Add a stream to control its volume here.';
+      mixerRows.append(none);
+    }
+    mixerNote.hidden = !streams.some((s) => !TYPES[s.t].api);
+    refreshMuteAll();
+  }
+
+  const mutable = () => streams.filter((s) => TYPES[s.t].mute);
+  function refreshMuteAll() {
+    const anyOn = mutable().some((s) => !s.muted);
+    muteAllBtn.textContent = anyOn ? 'Mute all' : 'Unmute all';
+    muteAllBtn.disabled = !mutable().length;
+  }
+  muteAllBtn.addEventListener('click', () => {
+    const anyOn = mutable().some((s) => !s.muted);
+    mutable().forEach((s) => { if (s.muted === anyOn) return; setSound(s, !anyOn); });
+  });
+
+  function positionMixer() {
+    if (mixer.hidden) return;
+    const a = mixerBtn.getBoundingClientRect();
+    const m = mixer.getBoundingClientRect();
+    mixer.style.left = `${Math.max(8, Math.min(a.right - m.width, innerWidth - m.width - 8))}px`;
+    mixer.style.top = `${a.bottom + 6}px`;
+  }
+  function openMixer() {
+    if (!mixer.hidden) return closeMixer();
+    closeMenu();
+    buildMixerRows();
+    mixer.hidden = false;
+    positionMixer();
+  }
+  function closeMixer() {
+    mixer.hidden = true;
+    for (const s of streams) s.volUIs = (s.volUIs || []).filter((ui) => !ui.inMixer);
+  }
+  mixerBtn.addEventListener('click', openMixer);
+  document.addEventListener('pointerdown', (e) => {
+    if (!mixer.hidden && !mixer.contains(e.target) && !mixerBtn.contains(e.target)) closeMixer();
+  });
+  window.addEventListener('blur', () => { if (!mixer.hidden) closeMixer(); });
+  window.addEventListener('resize', positionMixer);
+
   // ---------- Page address (shareable link) ----------
-  // Auto:   #tw:name/k:name/yt:VIDEOID/s:id    ("*" in front marks the big one)
-  // Custom: #@4r/tw:name/-/k:name/s:id         (layout id first; "-" is an empty spot)
+  // Auto:  #tw:name/k:name/yt:VIDEOID/s:id    ("*" in front marks the big one)
+  // Fixed: #@4r/tw:name/k:name/yt:ID/s:id     (layout id first, then each spot)
   let writingHash = false;
 
   function writeHash() {
     let h = '';
     if (isCustom()) {
-      h = ['@' + layoutId, ...slots.map((k) => k || '-')].join('/');
+      h = ['@' + layoutId, ...slots].join('/');
     } else if (streams.length) {
       h = streams.map((s) => (s.key === focusKey ? '*' : '') + s.key).join('/');
     }
@@ -824,26 +1061,24 @@
   function readHash() {
     let h = location.hash.replace(/^#\/?/, '');
     try { h = decodeURIComponent(h); } catch {}
-    const tokens = h.split('/').map((t) => t.trim()).filter(Boolean);
+    const tokens = h.split('/').map((t) => t.trim()).filter((t) => t && t !== '-');
     let layout = null;
     if (tokens[0]?.startsWith('@')) layout = tokens.shift().slice(1);
-    const entries = [];   // stream, or null for an empty spot
+    const wanted = [];
     let focus = null;
     for (const tok of tokens) {
-      if (tok === '-') { entries.push(null); continue; }
       const star = tok.startsWith('*');
       const r = parse(star ? tok.slice(1) : tok);
-      if (r && !r.error) {
-        entries.push(r);
+      if (r && !r.error && !wanted.some((w) => keyOf(w) === keyOf(r))) {
+        wanted.push(r);
         if (star) focus = keyOf(r);
       }
     }
-    return { layout, entries, focus };
+    return { layout, wanted, focus };
   }
 
   function loadFromHash() {
-    const { layout: id, entries, focus } = readHash();
-    const wanted = entries.filter(Boolean);
+    const { layout: id, wanted, focus } = readHash();
     const wantedKeys = wanted.map(keyOf);
     // Keep players that are still wanted (so they don't reload), drop the rest
     streams.filter((s) => !wantedKeys.includes(s.key)).forEach((s) => s.el.remove());
@@ -851,19 +1086,10 @@
     wanted.forEach((w) => add(w, { quiet: true }));
     streams.sort((x, y) => wantedKeys.indexOf(x.key) - wantedKeys.indexOf(y.key));
     focusKey = focus;
-
     const L = id && LAYOUT_BY_ID[id];
-    if (L && wanted.length && wanted.length <= L.zones.length) {
+    if (L && wanted.length === L.zones.length) {
       layoutId = id;
-      const seen = new Set();
-      slots = L.zones.map((_, i) => {
-        const k = entries[i] ? keyOf(entries[i]) : null;
-        if (!k || seen.has(k)) return null;
-        seen.add(k);
-        return k;
-      });
-      // Anything that didn't fit in its listed spot goes into the first free one
-      for (const s of streams) if (!seen.has(s.key)) slots[slots.indexOf(null)] = s.key;
+      slots = wantedKeys;
     } else {
       layoutId = 'auto';
       slots = [];
@@ -872,14 +1098,14 @@
   }
 
   function update() {
-    if (!streams.length && isCustom()) { layoutId = 'auto'; slots = []; }
+    if (isCustom() && slots.length !== streams.length) toAuto();
     empty.hidden = streams.length > 0;
     document.title = streams.length ? `Multi Viewer (${streams.length})` : 'Multi Viewer';
     layout();
     writeHash();
     if (!menu.hidden) { refreshMenu(); positionMenu(); }
+    if (!mixer.hidden) { buildMixerRows(); positionMixer(); }
     refreshSoundPrompt();
-    if (!streams.length) setArranging(false);
   }
 
   // ---------- Theme ----------
@@ -908,7 +1134,7 @@
     toastEl.classList.toggle('error', isError);
     toastEl.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), isError ? 6000 : 2500);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), isError ? 6000 : 3000);
   }
 
   $('#addForm').addEventListener('submit', (e) => {
@@ -916,26 +1142,22 @@
     const pieces = input.value.split(/[\s,]+/).filter(Boolean);
     const errors = [];
     let added = 0;
-    let overflowed = false;
     for (const p of pieces) {
       const r = parse(p);
       if (!r) continue;
       if (r.error) { errors.push(r.error); continue; }
-      const s = add(r, { sound: true });   // pressing Add counts as a click, so sound is allowed
-      if (!s) continue;
-      added++;
-      if (!placeNew(s.key)) {
-        // No free spot in the custom layout: fall back to Auto so nothing is hidden
-        setLayout('auto');
-        overflowed = true;
-      }
+      if (add(r, { sound: true })) added++;   // pressing Add counts as a click, so sound is allowed
     }
-    if (added) update();
+    if (added) {
+      const hadLayout = isCustom();
+      toAuto();   // a fixed layout has no spot for the new stream
+      update();
+      if (hadLayout && !errors.length) toast(`Back to Auto. Open Layout to pick one for ${streams.length} streams.`);
+    }
     if (errors.length) {
       toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} more)` : ''), true);
     } else {
       input.value = '';
-      if (overflowed) toast('No empty spot left, so the layout switched to Auto. Pick a bigger layout to arrange them.');
     }
   });
 
@@ -962,28 +1184,15 @@
   $('#hideBtn').addEventListener('click', () => setBarHidden(true));
   $('#showBar').addEventListener('click', () => setBarHidden(false));
 
-  // Arrange mode: every stream gets a cover you can grab anywhere to drag it
-  const arrangeBtn = $('#arrangeBtn');
-  function setArranging(on) {
-    stage.classList.toggle('arranging', on);
-    arrangeBtn.setAttribute('aria-pressed', String(on));
-    arrangeBtn.querySelector('span').textContent = on ? 'Done' : 'Arrange';
-    arrangeBtn.classList.toggle('primary', on);
-  }
-  arrangeBtn.addEventListener('click', () => {
-    if (!streams.length) return toast('Add a stream first');
-    setArranging(!stage.classList.contains('arranging'));
-  });
-
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && drag?.active) { endDrag(false); return; }
     if (e.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
-    if (e.key === 'Escape' && stage.classList.contains('arranging')) { setArranging(false); return; }
+    if (e.key === 'Escape' && !mixer.hidden) { closeMixer(); return; }
     const typing = e.target instanceof Element && e.target.closest('input, textarea');
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'h' || e.key === 'H') setBarHidden(!document.body.classList.contains('bar-hidden'));
     if (e.key === 'l' || e.key === 'L') openMenu($('#layoutBtn'));
-    if ((e.key === 'a' || e.key === 'A') && streams.length) setArranging(!stage.classList.contains('arranging'));
+    if (e.key === 'v' || e.key === 'V') openMixer();
     if (e.key === 'Escape' && focusKey) { focusKey = null; update(); }
   });
 
@@ -1000,7 +1209,7 @@
 
   try {
     if (localStorage.getItem('mv-bar-hidden')) document.body.classList.add('bar-hidden');
-    fillScreen = !!localStorage.getItem('mv-fill');
+    fillScreen = localStorage.getItem('mv-fill') !== '0';
   } catch {}
   loadFromHash();
   if (!streams.length) input.focus();

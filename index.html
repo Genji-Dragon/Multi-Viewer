@@ -30,9 +30,9 @@
         <svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13"/></svg>
         Turn on sound
       </button>
-      <button id="arrangeBtn" type="button" aria-pressed="false" title="Grab any stream and drag it to a new spot (A)">
-        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>
-        <span>Arrange</span>
+      <button id="mixerBtn" type="button" title="Volume mixer: every stream's volume in one place (V)">
+        <svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+        Volume
       </button>
       <button id="layoutBtn" type="button" title="Choose how the videos are arranged (L)">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
@@ -56,8 +56,8 @@
   <main id="stage">
     <section id="empty">
       <h1>Watch streams side by side</h1>
-      <p>Paste a link above. Video only, no chat. Use <b>Layout</b> to pick an arrangement and
-        <b>Arrange</b> to grab streams and drag them where you want.</p>
+      <p>Paste a link above. Video only, no chat. Hold a stream's title bar and drag it to move it,
+        or use <b>Layout</b> to pick an arrangement.</p>
       <ul class="examples">
         <li><span class="dot tw"></span><b>Twitch</b><code>twitch.tv/name</code><code>twitch.tv/videos/123</code></li>
         <li><span class="dot k"></span><b>Kick</b><code>kick.com/name</code></li>
@@ -72,7 +72,7 @@
   <div id="layoutMenu" class="menu" role="dialog" aria-labelledby="layoutMenuTitle" hidden>
     <div class="menu-head">
       <span id="layoutMenuTitle">Layout</span>
-      <label title="Stretch the layout over the whole screen (videos get black bars)">
+      <label title="Use the whole screen. Turn off to keep every video exactly 16:9.">
         <input id="fillToggle" type="checkbox"> Fill screen
       </label>
     </div>
@@ -81,6 +81,22 @@
       <b>Auto</b><span>Fit every stream, equal sizes</span>
     </button>
     <div id="layoutGrid" class="lay-grid"></div>
+    <p id="layoutNone" class="menu-hint" hidden></p>
+  </div>
+
+  <div id="mixer" class="menu mixer" role="dialog" aria-labelledby="mixerTitle" hidden>
+    <div class="menu-head">
+      <span id="mixerTitle">Volume mixer</span>
+      <button id="muteAllBtn" type="button" class="small">Mute all</button>
+    </div>
+    <div id="mixerRows" class="mix-rows"></div>
+    <p id="mixerNote" class="menu-hint" hidden>Kick and SOOP don't let other pages change their volume, so set it inside their player.</p>
+  </div>
+
+  <!-- Shown while dragging a stream: drop it on a spot to snap it there -->
+  <div id="snapBar" class="snap-bar" hidden>
+    <div class="snap-title">Drop on a spot to snap it there</div>
+    <div id="snapGrid" class="snap-grid"></div>
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
