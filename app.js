@@ -362,16 +362,13 @@
     if (api === 'yt') {
       const cmd = (func, args = []) => post(s, JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }));
       post(s, JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }));
-      if (s.muted) {
-        cmd('mute');
-      } else {
-        cmd('setVolume', [VOLUME]);
-        cmd('unMute');
-      }
+      // Volume is set even while muted, so unmuting inside the player also gives VOLUME
+      cmd('setVolume', [VOLUME]);
+      cmd(s.muted ? 'mute' : 'unMute');
     } else if (api === 'tw') {
       // Twitch's embed commands: 10 = set muted, 11 = set volume (0 to 1)
       const cmd = (eventName, params) => post(s, { eventName, params, namespace: 'twitch-embed-player-proxy' });
-      if (!s.muted) cmd(11, VOLUME / 100);
+      cmd(11, VOLUME / 100);
       cmd(10, s.muted);
     }
   }
