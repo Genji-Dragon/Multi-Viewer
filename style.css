@@ -1,0 +1,223 @@
+:root {
+  --bg: #0e0e10;
+  --panel: #18181b;
+  --panel-2: #222227;
+  --line: #2e2e34;
+  --text: #efeff1;
+  --muted: #9a9aa5;
+  --accent: #7c5cff;
+  --twitch: #9146ff;
+  --kick: #53fc18;
+  --youtube: #ff2a4a;
+  --soop: #3d7bff;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover { background: #2c2c33; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.primary:hover { background: #6b4bf0; }
+button.icon { display: inline-grid; place-items: center; padding: 6px; }
+svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Top bar ---------- */
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
+.brand span { color: var(--accent); }
+#addForm { flex: 1 1 320px; display: flex; gap: 6px; min-width: 0; }
+#addInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+}
+#addInput::placeholder { color: #6e6e78; }
+.actions { display: flex; gap: 6px; }
+
+body.bar-hidden #bar { display: none; }
+#showBar {
+  position: fixed;
+  top: 6px;
+  right: 6px;
+  z-index: 20;
+  display: none;
+  opacity: .25;
+  background: rgba(24, 24, 27, .9);
+}
+#showBar:hover, #showBar:focus-visible { opacity: 1; }
+body.bar-hidden #showBar { display: inline-grid; }
+
+#notice {
+  padding: 6px 12px;
+  background: #3a2a00;
+  color: #ffd37a;
+  border-bottom: 1px solid #5a4100;
+  font-size: 13px;
+}
+
+/* ---------- Stage & tiles ---------- */
+#stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+
+.tile {
+  position: absolute;
+  background: #000;
+  overflow: hidden;
+  transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
+}
+.tile iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+.tile.focused { box-shadow: 0 0 0 2px var(--accent); }
+.tile.drop-target { box-shadow: 0 0 0 3px var(--accent) inset; }
+.tile.drop-target::after { content: ""; position: absolute; inset: 0; background: rgba(124, 92, 255, .18); }
+
+/* While dragging, iframes must not swallow the mouse */
+#stage.dragging iframe { pointer-events: none; }
+
+.tile-bar {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  max-width: calc(100% - 12px);
+  background: rgba(14, 14, 16, .88);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 7px;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity .15s, transform .15s;
+  pointer-events: none;
+}
+.tile:hover .tile-bar, .tile-bar:focus-within, #stage.dragging .tile-bar { opacity: 1; transform: none; pointer-events: auto; }
+
+.tile-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+}
+.tile-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-name:active { cursor: grabbing; }
+.tile-bar button {
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #d6d6dc;
+}
+.tile-bar button:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.tile-bar button.on { color: var(--accent); }
+.tile-bar svg { width: 15px; height: 15px; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.dot.tw { background: var(--twitch); }
+.dot.k { background: var(--kick); }
+.dot.yt { background: var(--youtube); }
+.dot.s { background: var(--soop); }
+
+/* ---------- Empty state ---------- */
+#empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+  overflow: auto;
+}
+#empty[hidden], #notice[hidden] { display: none; }
+#empty h1 { margin: 0 0 6px; color: var(--text); font-size: 24px; font-weight: 700; }
+#empty p { margin: 0 0 18px; max-width: 560px; }
+#empty .hint { font-size: 13px; margin-top: 18px; }
+.examples { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; text-align: left; }
+.examples li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.examples b { color: var(--text); width: 64px; }
+code {
+  font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--panel-2);
+  color: #cfcfd6;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 30;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 9px 14px;
+  background: #2a2a31;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.error { border-color: #7a2d3a; background: #3a1d23; }
+
+@media (max-width: 640px) {
+  .brand { display: none; }
+  #addForm { flex-basis: 100%; }
+  .actions { margin-left: auto; }
+}

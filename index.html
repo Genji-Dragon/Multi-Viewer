@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi Viewer</title>
+  <meta name="description" content="Watch YouTube, Twitch, Kick and SOOP streams side by side. Video only, no chat.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Crect x='6' y='8' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='17' y='8' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='6' y='17' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='17' y='17' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="brand">Multi<span>Viewer</span></div>
+    <form id="addForm" autocomplete="off">
+      <input id="addInput" type="text" spellcheck="false"
+             placeholder="Paste YouTube, Twitch, Kick or SOOP links (several at once works)">
+      <button type="submit" class="primary">Add</button>
+    </form>
+    <div class="actions">
+      <button id="shareBtn" type="button" title="Copy a link that opens this exact set of streams">Copy link</button>
+      <button id="clearBtn" type="button" title="Remove all streams">Clear</button>
+      <button id="hideBtn" type="button" class="icon" title="Hide this bar (more room for video)" aria-label="Hide bar">
+        <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <button id="showBar" type="button" class="icon" title="Show bar" aria-label="Show bar">
+    <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+
+  <div id="notice" hidden></div>
+
+  <main id="stage">
+    <section id="empty">
+      <h1>Watch streams side by side</h1>
+      <p>Paste a link above. Video only, no chat. Hover a stream for controls; drag its name to reorder.</p>
+      <ul class="examples">
+        <li><span class="dot tw"></span><b>Twitch</b><code>twitch.tv/name</code><code>twitch.tv/videos/123</code></li>
+        <li><span class="dot k"></span><b>Kick</b><code>kick.com/name</code></li>
+        <li><span class="dot yt"></span><b>YouTube</b><code>youtube.com/watch?v=…</code><code>youtube.com/live/…</code><code>youtu.be/…</code></li>
+        <li><span class="dot s"></span><b>SOOP</b><code>sooplive.co.kr/station/id</code><code>play.sooplive.co.kr/id</code></li>
+      </ul>
+      <p class="hint">Shortcuts: a bare name is Twitch. Use <code>kick:name</code>, <code>soop:id</code> or <code>yt:VIDEO_ID</code> for the others.
+        The page address updates as you add streams, so <b>Copy link</b> shares your whole layout.</p>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
