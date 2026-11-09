@@ -13,22 +13,27 @@
 
   // ---------- Platforms ----------
   // Each stream is { t: type, id }. The type decides how it is embedded.
+  //   mute: whether the viewer can mute/unmute it
+  //   api:  'yt' / 'tw' players take volume commands, so they always load muted and
+  //         get their sound (at VOLUME) turned on once ready. Kick can only be told
+  //         "muted or not" in its address, and SOOP not even that.
+  const VOLUME = 26;                     // % volume for YouTube and Twitch players
   const enc = encodeURIComponent;
   const TYPES = {
-    tw: { label: 'Twitch', dot: 'tw', mute: true,
-          embed: (id, m) => `https://player.twitch.tv/?channel=${enc(id)}&parent=${enc(HOST)}&muted=${m}&autoplay=true`,
+    tw: { label: 'Twitch', dot: 'tw', mute: true, api: 'tw',
+          embed: (id) => `https://player.twitch.tv/?channel=${enc(id)}&parent=${enc(HOST)}&muted=true&autoplay=true`,
           open: (id) => `https://www.twitch.tv/${id}` },
-    tv: { label: 'Twitch VOD', dot: 'tw', mute: true,
-          embed: (id, m) => `https://player.twitch.tv/?video=v${enc(id)}&parent=${enc(HOST)}&muted=${m}&autoplay=true`,
+    tv: { label: 'Twitch VOD', dot: 'tw', mute: true, api: 'tw',
+          embed: (id) => `https://player.twitch.tv/?video=v${enc(id)}&parent=${enc(HOST)}&muted=true&autoplay=true`,
           open: (id) => `https://www.twitch.tv/videos/${id}` },
-    tc: { label: 'Twitch clip', dot: 'tw', mute: true,
-          embed: (id, m) => `https://clips.twitch.tv/embed?clip=${enc(id)}&parent=${enc(HOST)}&muted=${m}&autoplay=true`,
+    tc: { label: 'Twitch clip', dot: 'tw', mute: true, api: 'tw',
+          embed: (id) => `https://clips.twitch.tv/embed?clip=${enc(id)}&parent=${enc(HOST)}&muted=true&autoplay=true`,
           open: (id) => `https://clips.twitch.tv/${id}` },
     k:  { label: 'Kick', dot: 'k', mute: true,
           embed: (id, m) => `https://player.kick.com/${enc(id)}?autoplay=true&muted=${m}`,
           open: (id) => `https://kick.com/${id}` },
-    yt: { label: 'YouTube', dot: 'yt', mute: true,
-          embed: (id, m) => `https://www.youtube.com/embed/${enc(id)}?autoplay=1&mute=${m ? 1 : 0}&playsinline=1&rel=0`,
+    yt: { label: 'YouTube', dot: 'yt', mute: true, api: 'yt',
+          embed: (id) => `https://www.youtube.com/embed/${enc(id)}?autoplay=1&mute=1&playsinline=1&rel=0&enablejsapi=1&origin=${enc(location.origin)}`,
           open: (id) => `https://www.youtube.com/watch?v=${id}` },
     s:  { label: 'SOOP', dot: 's', mute: false,
           embed: (id) => `https://play.sooplive.com/${enc(id)}/embed`,
@@ -204,13 +209,18 @@
     return isCustom() ? slots.filter(Boolean) : streams.map((s) => s.key);
   }
 
-  function add(stream, { quiet = false } = {}) {
+  // Browsers only allow sound after the person has clicked or typed on the page.
+  // Before that (e.g. opening a shared link), streams start muted and the
+  // "Turn on sound" button appears.
+  const canPlaySound = () => !!navigator.userActivation?.hasBeenActive;
+
+  function add(stream, { quiet = false, sound = canPlaySound() } = {}) {
     const key = keyOf(stream);
     if (byKey(key)) {
       if (!quiet) toast(`${TYPES[stream.t].label} ${stream.id} is already open`);
       return null;
     }
-    const s = { ...stream, key, muted: true };
+    const s = { ...stream, key, muted: !sound, waitingForClick: !sound };
     s.el = buildTile(s);
     streams.push(s);
     stage.appendChild(s.el);
@@ -341,27 +351,175 @@
     return TYPES[s.t].embed(s.id, s.muted);
   }
 
-  // Drag & drop. Tiles never move in the page (that would reload the
-  // players); only their position on screen changes.
-  const DRAG_TYPE = 'text/x-mv-key';
-
-  function makeDropTarget(el, onDrop) {
-    el.addEventListener('dragover', (e) => {
-      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      el.classList.add('drop-target');
-    });
-    el.addEventListener('dragleave', (e) => {
-      if (!el.contains(e.relatedTarget)) el.classList.remove('drop-target');
-    });
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      el.classList.remove('drop-target');
-      onDrop(e.dataTransfer.getData(DRAG_TYPE));
-    });
+  // ---------- Sound ----------
+  function post(s, msg) {
+    try { s.frame.contentWindow?.postMessage(msg, '*'); } catch {}
   }
 
+  /** Tell a YouTube or Twitch player whether to be muted, and set its volume. */
+  function sendAudio(s) {
+    const api = TYPES[s.t].api;
+    if (api === 'yt') {
+      const cmd = (func, args = []) => post(s, JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }));
+      post(s, JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }));
+      if (s.muted) {
+        cmd('mute');
+      } else {
+        cmd('setVolume', [VOLUME]);
+        cmd('unMute');
+      }
+    } else if (api === 'tw') {
+      // Twitch's embed commands: 10 = set muted, 11 = set volume (0 to 1)
+      const cmd = (eventName, params) => post(s, { eventName, params, namespace: 'twitch-embed-player-proxy' });
+      if (!s.muted) cmd(11, VOLUME / 100);
+      cmd(10, s.muted);
+    }
+  }
+
+  // Players finish starting up at different times, so the sound settings are sent
+  // a few times after loading and again when the player says it's ready. After
+  // that, whatever the person sets inside the player is left alone.
+  function onFrameLoad(s) {
+    if (!TYPES[s.t].api) return;
+    s.audioUntil = Date.now() + 15000;
+    s.readySeen = new Set();
+    clearTimeout(s.audioTimer);
+    let i = 0;
+    const delays = [600, 1500, 3000, 6000];
+    const tick = () => {
+      if (!byKey(s.key)) return;
+      sendAudio(s);
+      if (++i < delays.length) s.audioTimer = setTimeout(tick, delays[i] - delays[i - 1]);
+    };
+    s.audioTimer = setTimeout(tick, delays[0]);
+  }
+
+  window.addEventListener('message', (e) => {
+    const s = streams.find((x) => x.frame.contentWindow === e.source);
+    if (!s || !(Date.now() < s.audioUntil)) return;
+    let d = e.data;
+    if (typeof d === 'string') {
+      try { d = JSON.parse(d); } catch { return; }
+    }
+    if (!d || typeof d !== 'object') return;
+    const ev = d.event === 'onReady' ? 'yt-ready'
+      : d.namespace === 'twitch-embed' && ['ready', 'video.ready', 'playing'].includes(d.eventName) ? d.eventName
+      : null;
+    if (ev && !s.readySeen.has(ev)) {
+      s.readySeen.add(ev);
+      sendAudio(s);
+    }
+  });
+
+  function setSound(s, on) {
+    s.muted = !on;
+    s.waitingForClick = false;
+    if (TYPES[s.t].api) {
+      s.audioUntil = Date.now() + 15000;
+      s.readySeen = new Set();
+      sendAudio(s);
+    } else {
+      s.frame.src = embedUrl(s);   // Kick only reads this when loading
+    }
+    refreshMuteButton(s);
+    refreshSoundPrompt();
+  }
+
+  function refreshMuteButton(s) {
+    const b = s.muteBtn;
+    if (!b) return;
+    const reloads = TYPES[s.t].api ? '' : ' (reloads player)';
+    b.innerHTML = svg(s.muted ? 'muted' : 'sound');
+    b.title = (s.muted ? 'Turn sound on' : 'Mute') + reloads;
+    b.setAttribute('aria-label', b.title);
+  }
+
+  const soundBtn = $('#soundBtn');
+  function refreshSoundPrompt() {
+    soundBtn.hidden = !streams.some((s) => s.waitingForClick);
+  }
+  function turnOnWaitingSound() {
+    streams.filter((s) => s.waitingForClick).forEach((s) => setSound(s, true));
+  }
+  soundBtn.addEventListener('click', turnOnWaitingSound);
+  // Any click or key press on the page counts, so sound comes on with the first one
+  document.addEventListener('pointerdown', turnOnWaitingSound, true);
+  document.addEventListener('keydown', turnOnWaitingSound, true);
+
+  // ---------- Moving streams by dragging ----------
+  // Press and hold a stream's name (or anywhere on it in Arrange mode), drag it
+  // over another stream to swap places, or over an empty spot to move it there.
+  // Tiles never move inside the page (that would reload the players); only their
+  // position on screen changes.
+  let drag = null;
+
+  function dropTargetAt(x, y, dragged) {
+    const inside = (el) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    for (const s of streams) if (s !== dragged && inside(s.el)) return { el: s.el, key: s.key };
+    for (const el of emptySpots) if (inside(el)) return { el, index: Number(el.dataset.index) };
+    return null;
+  }
+
+  function endDrag(drop) {
+    const { s, target } = drag;
+    drag = null;
+    target?.el.classList.remove('drop-target');
+    const before = s.el.getBoundingClientRect();
+    s.el.classList.add('no-anim');           // jump straight to the new spot, then glide in
+    stage.classList.remove('dragging');
+    if (drop && target) {
+      if (target.key) move(s.key, target.key);
+      else moveToSlot(s.key, target.index);
+    }
+    s.el.style.transform = 'none';
+    const after = s.el.getBoundingClientRect();
+    s.el.style.transform = `translate(${before.left - after.left}px, ${before.top - after.top}px)`;
+    void s.el.offsetWidth;                   // apply that before animating
+    s.el.classList.remove('no-anim');
+    s.el.classList.add('settling');
+    s.el.style.transform = '';
+    setTimeout(() => s.el.classList.remove('lifted', 'settling'), 260);
+  }
+
+  function makeDragHandle(handle, s) {
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || drag) return;
+      e.preventDefault();
+      try { handle.setPointerCapture(e.pointerId); } catch {}
+      drag = { s, handle, x0: e.clientX, y0: e.clientY, active: false, target: null };
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!drag || drag.handle !== handle) return;
+      const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (!drag.active) {
+        if (Math.hypot(dx, dy) < 5) return;
+        drag.active = true;
+        closeMenu();
+        stage.classList.add('dragging');
+        s.el.classList.add('lifted');
+      }
+      s.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      const t = dropTargetAt(e.clientX, e.clientY, s);
+      if (t?.el !== drag.target?.el) {
+        drag.target?.el.classList.remove('drop-target');
+        t?.el.classList.add('drop-target');
+        drag.target = t;
+      }
+    });
+    const finish = (drop) => () => {
+      if (!drag || drag.handle !== handle) return;
+      if (drag.active) endDrag(drop);
+      else drag = null;
+    };
+    handle.addEventListener('pointerup', finish(true));
+    handle.addEventListener('pointercancel', finish(false));
+    handle.addEventListener('lostpointercapture', finish(false));
+  }
+
+  // ---------- Building a tile ----------
   function buildTile(s) {
     const type = TYPES[s.t];
     const el = document.createElement('div');
@@ -369,24 +527,35 @@
     el.dataset.key = s.key;
 
     const frame = document.createElement('iframe');
-    frame.src = embedUrl(s);
     frame.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.title = `${type.label}: ${s.id}`;
+    frame.addEventListener('load', () => onFrameLoad(s));
+    frame.src = embedUrl(s);
     s.frame = frame;
+
+    // Covers the video in Arrange mode so the whole stream can be grabbed
+    const grab = document.createElement('div');
+    grab.className = 'grab';
+    const grabName = document.createElement('b');
+    grabName.textContent = s.id;
+    const grabHint = document.createElement('span');
+    grabHint.textContent = 'Hold and drag to move';
+    grab.append(grabName, grabHint);
+    makeDragHandle(grab, s);
 
     const bar = document.createElement('div');
     bar.className = 'tile-bar';
 
     const name = document.createElement('div');
     name.className = 'tile-name';
-    name.draggable = true;
-    name.title = 'Drag onto another stream to swap places';
+    name.title = 'Hold and drag to move';
     const dot = document.createElement('span');
     dot.className = `dot ${type.dot}`;
     const label = document.createElement('span');
     label.textContent = s.id;
     name.append(dot, label);
+    makeDragHandle(name, s);
     bar.append(name);
 
     const layoutBtn = iconButton('layout', 'Choose this stream\'s spot', () => openMenu(layoutBtn, s.key));
@@ -400,14 +569,9 @@
     bar.append(focusBtn);
 
     if (type.mute) {
-      const muteBtn = iconButton('muted', 'Unmute (reloads player)', () => {
-        s.muted = !s.muted;
-        muteBtn.innerHTML = svg(s.muted ? 'muted' : 'sound');
-        muteBtn.title = s.muted ? 'Unmute (reloads player)' : 'Mute (reloads player)';
-        muteBtn.setAttribute('aria-label', muteBtn.title);
-        frame.src = embedUrl(s);
-      });
-      bar.append(muteBtn);
+      s.muteBtn = iconButton('muted', '', () => setSound(s, s.muted));
+      refreshMuteButton(s);
+      bar.append(s.muteBtn);
     }
 
     bar.append(
@@ -416,19 +580,7 @@
       iconButton('close', 'Remove', () => remove(s.key)),
     );
 
-    name.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData(DRAG_TYPE, s.key);
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setDragImage(name, 10, 10);
-      stage.classList.add('dragging');
-    });
-    name.addEventListener('dragend', () => {
-      stage.classList.remove('dragging');
-      document.querySelectorAll('.drop-target').forEach((t) => t.classList.remove('drop-target'));
-    });
-    makeDropTarget(el, (fromKey) => move(fromKey, s.key));
-
-    el.append(frame, bar);
+    el.append(frame, grab, bar);
     return el;
   }
 
@@ -513,8 +665,8 @@
   function emptySpot(index) {
     const el = document.createElement('div');
     el.className = 'empty-spot';
-    el.innerHTML = '<b>Empty spot</b><span>Paste a link above or drag a stream here</span>';
-    makeDropTarget(el, (key) => moveToSlot(key, index));
+    el.innerHTML = '<b>Empty spot</b><span>Drop here</span>';
+    el.dataset.index = index;
     return el;
   }
 
@@ -729,6 +881,8 @@
     layout();
     writeHash();
     if (!menu.hidden) { refreshMenu(); positionMenu(); }
+    refreshSoundPrompt();
+    if (!streams.length) setArranging(false);
   }
 
   // ---------- Theme ----------
@@ -770,7 +924,7 @@
       const r = parse(p);
       if (!r) continue;
       if (r.error) { errors.push(r.error); continue; }
-      const s = add(r);
+      const s = add(r, { sound: true });   // pressing Add counts as a click, so sound is allowed
       if (!s) continue;
       added++;
       if (!placeNew(s.key)) {
@@ -811,12 +965,28 @@
   $('#hideBtn').addEventListener('click', () => setBarHidden(true));
   $('#showBar').addEventListener('click', () => setBarHidden(false));
 
+  // Arrange mode: every stream gets a cover you can grab anywhere to drag it
+  const arrangeBtn = $('#arrangeBtn');
+  function setArranging(on) {
+    stage.classList.toggle('arranging', on);
+    arrangeBtn.setAttribute('aria-pressed', String(on));
+    arrangeBtn.querySelector('span').textContent = on ? 'Done' : 'Arrange';
+    arrangeBtn.classList.toggle('primary', on);
+  }
+  arrangeBtn.addEventListener('click', () => {
+    if (!streams.length) return toast('Add a stream first');
+    setArranging(!stage.classList.contains('arranging'));
+  });
+
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drag?.active) { endDrag(false); return; }
     if (e.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
+    if (e.key === 'Escape' && stage.classList.contains('arranging')) { setArranging(false); return; }
     const typing = e.target instanceof Element && e.target.closest('input, textarea');
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'h' || e.key === 'H') setBarHidden(!document.body.classList.contains('bar-hidden'));
     if (e.key === 'l' || e.key === 'L') openMenu($('#layoutBtn'));
+    if ((e.key === 'a' || e.key === 'A') && streams.length) setArranging(!stage.classList.contains('arranging'));
     if (e.key === 'Escape' && focusKey) { focusKey = null; update(); }
   });
 

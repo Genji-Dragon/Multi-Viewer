@@ -11,15 +11,24 @@ Live site (after GitHub Pages is turned on): https://genji-dragon.github.io/Mult
    - **Auto** fits every stream at equal size (the default).
    - The other options are fixed layouts: side by side, one big plus a column, 2×2, 3×3 and more. Layouts with fewer spots than you have streams are greyed out.
    - **Fill screen** stretches the layout over the whole window. When it's off, the layout is sized so each video is as close to 16:9 as possible.
-3. Hover a stream to get its controls:
+3. Press **Arrange** (or `A`) to move streams around: hold any stream and drag it onto another to swap places, or onto a free spot to move it there. Press **Done** (or `Esc`) when finished. You can also drag a stream by its name tag at any time, without Arrange mode. Empty spots in a layout stay hidden and only show up while you're dragging.
+4. Hover a stream to get its controls:
    - **Layout button**: pick the exact spot this stream goes in (it swaps with whatever is there)
-   - **Drag the name** onto another stream to swap places, or onto an empty spot to move it there
    - **Make big** (Auto layout only): one large player with the rest in a strip (press `Esc` to go back to the grid)
-   - **Unmute/Mute**: reloads that player with or without sound (all streams start muted so they can autoplay)
+   - **Mute / Turn sound on**
    - **Reload**, **Open on site**, **Remove**
-4. Press **Copy link** to share your current streams and layout. The page address always holds them, so bookmarks work too.
-5. Press the sun/moon button to switch between light and dark mode (it remembers your choice).
-6. Press `H` (or the arrow button) to hide the top bar.
+5. Press **Copy link** to share your current streams and layout. The page address always holds them, so bookmarks work too.
+6. Press the sun/moon button to switch between light and dark mode (it remembers your choice).
+7. Press `H` (or the arrow button) to hide the top bar.
+
+## Sound
+
+Streams you add start playing with sound:
+
+- **YouTube and Twitch** start at **26% volume**.
+- **Kick and SOOP** play at their own player's volume. Their embedded players don't let other pages change the volume, so lower it inside the player if needed.
+
+When you open a shared link or bookmark, browsers keep sound off until you click somewhere on the page. A **Turn on sound** button appears, and your first click anywhere turns the sound on.
 
 ## Supported links
 

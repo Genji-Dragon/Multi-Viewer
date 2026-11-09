@@ -75,7 +75,8 @@ button {
   white-space: nowrap;
 }
 button:hover { background: var(--hover); }
-#layoutBtn { display: inline-flex; align-items: center; gap: 6px; }
+#layoutBtn, #arrangeBtn, #soundBtn { display: inline-flex; align-items: center; gap: 6px; }
+#soundBtn[hidden] { display: none; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.primary:hover { background: var(--accent-hover); }
@@ -146,7 +147,9 @@ body.bar-hidden #showBar { display: inline-grid; }
 /* "Make big" only applies to the Auto layout */
 #stage.custom .focus-btn { display: none; }
 
-.empty-spot {
+/* Empty spots stay invisible; they only show up as places to drop while dragging */
+.empty-spot { display: none; }
+#stage.dragging .empty-spot {
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -163,10 +166,45 @@ body.bar-hidden #showBar { display: inline-grid; }
   transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
 }
 .empty-spot b { color: var(--text); font-weight: 600; }
-.empty-spot.drop-target { border-color: var(--accent); background: rgba(124, 92, 255, .12); }
+#stage.dragging .empty-spot.drop-target { border-color: var(--accent); background: rgba(124, 92, 255, .12); }
 
 /* While dragging, iframes must not swallow the mouse */
 #stage.dragging iframe { pointer-events: none; }
+#stage.dragging, #stage.dragging * { cursor: grabbing !important; }
+
+/* The stream being dragged follows the mouse, above everything else */
+.tile.lifted {
+  z-index: 10;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .55), 0 0 0 2px var(--accent);
+  opacity: .93;
+}
+.tile.no-anim { transition: none !important; }
+.tile.settling { transition: transform .22s ease; }
+
+/* Arrange mode: a cover over each video that can be grabbed anywhere */
+.grab {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  text-align: center;
+  color: #fff;
+  background: rgba(10, 10, 14, .45);
+  border: 2px dashed rgba(255, 255, 255, .35);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.grab b { font-size: 16px; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.grab span { font-size: 12px; opacity: .85; }
+.grab:hover { background: rgba(10, 10, 14, .3); border-color: var(--accent); }
+#stage.arranging .grab { display: flex; }
+.tile.lifted .grab { background: rgba(124, 92, 255, .25); }
 
 .tile-bar {
   position: absolute;
@@ -198,6 +236,7 @@ body.bar-hidden #showBar { display: inline-grid; }
   font-weight: 600;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 .tile-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-name:active { cursor: grabbing; }

@@ -26,6 +26,14 @@
       <button type="submit" class="primary">Add</button>
     </form>
     <div class="actions">
+      <button id="soundBtn" type="button" class="primary" title="Browsers keep sound off until you click the page" hidden>
+        <svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13"/></svg>
+        Turn on sound
+      </button>
+      <button id="arrangeBtn" type="button" aria-pressed="false" title="Grab any stream and drag it to a new spot (A)">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>
+        <span>Arrange</span>
+      </button>
       <button id="layoutBtn" type="button" title="Choose how the videos are arranged (L)">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
         Layout
@@ -48,8 +56,8 @@
   <main id="stage">
     <section id="empty">
       <h1>Watch streams side by side</h1>
-      <p>Paste a link above. Video only, no chat. Hover a stream for controls; drag its name to swap places,
-        or use <b>Layout</b> to arrange them your way.</p>
+      <p>Paste a link above. Video only, no chat. Use <b>Layout</b> to pick an arrangement and
+        <b>Arrange</b> to grab streams and drag them where you want.</p>
       <ul class="examples">
         <li><span class="dot tw"></span><b>Twitch</b><code>twitch.tv/name</code><code>twitch.tv/videos/123</code></li>
         <li><span class="dot k"></span><b>Kick</b><code>kick.com/name</code></li>
