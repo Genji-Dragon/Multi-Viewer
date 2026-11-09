@@ -147,40 +147,161 @@
     return fail(`${u.hostname} isn't supported (YouTube, Twitch, Kick or SOOP only)`);
   }
 
+  // ---------- Layouts ----------
+  // Each zone is [x, y, width, height] as a fraction of the screen.
+  const T = 1 / 3;
+  const grid = (cols, rows) => {
+    const z = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) z.push([c / cols, r / rows, 1 / cols, 1 / rows]);
+    return z;
+  };
+  const LAYOUTS = [
+    { id: '2v', zones: [[0, 0, .5, 1], [.5, 0, .5, 1]] },
+    { id: '2w', zones: [[0, 0, 2 * T, 1], [2 * T, 0, T, 1]] },
+    { id: '2h', zones: [[0, 0, 1, .5], [0, .5, 1, .5]] },
+    { id: '3r', zones: [[0, 0, .5, 1], [.5, 0, .5, .5], [.5, .5, .5, .5]] },
+    { id: '3l', zones: [[0, 0, .5, .5], [0, .5, .5, .5], [.5, 0, .5, 1]] },
+    { id: '3c', zones: grid(3, 1) },
+    { id: '3m', zones: [[0, 0, .25, 1], [.25, 0, .5, 1], [.75, 0, .25, 1]] },
+    { id: '3b', zones: [[0, 0, 1, 2 * T], [0, 2 * T, .5, T], [.5, 2 * T, .5, T]] },
+    { id: '4g', zones: grid(2, 2) },
+    { id: '4r', zones: [[0, 0, .75, 1], [.75, 0, .25, T], [.75, T, .25, T], [.75, 2 * T, .25, T]] },
+    { id: '4b', zones: [[0, 0, 1, .75], [0, .75, T, .25], [T, .75, T, .25], [2 * T, .75, T, .25]] },
+    { id: '4c', zones: grid(4, 1) },
+    { id: '5r', zones: [[0, 0, .5, 1], [.5, 0, .25, .5], [.75, 0, .25, .5], [.5, .5, .25, .5], [.75, .5, .25, .5]] },
+    { id: '5b', zones: [[0, 0, .5, .6], [.5, 0, .5, .6], [0, .6, T, .4], [T, .6, T, .4], [2 * T, .6, T, .4]] },
+    { id: '6l', zones: [[0, 0, 2 * T, 2 * T], [2 * T, 0, T, T], [2 * T, T, T, T], [0, 2 * T, T, T], [T, 2 * T, T, T], [2 * T, 2 * T, T, T]] },
+    { id: '6g', zones: grid(3, 2) },
+    { id: '8g', zones: grid(4, 2) },
+    { id: '9g', zones: grid(3, 3) },
+  ];
+  const LAYOUT_BY_ID = Object.fromEntries(LAYOUTS.map((l) => [l.id, l]));
+
+  // The screen shape at which this layout's spots come closest to 16:9.
+  // Used to size the layout when "Fill screen" is off, so videos aren't letterboxed.
+  for (const l of LAYOUTS) {
+    let sum = 0, weight = 0;
+    for (const [, , w, h] of l.zones) {
+      sum += w * h * Math.log(AR * h / w);
+      weight += w * h;
+    }
+    l.aspect = Math.exp(sum / weight);
+  }
+
   // ---------- State ----------
   /** @type {{key:string,t:string,id:string,muted:boolean,el:HTMLElement,frame:HTMLIFrameElement}[]} */
-  let streams = [];
-  let focusKey = null;
+  let streams = [];        // every open stream (its order is the Auto layout order)
+  let focusKey = null;     // the big one in Auto layout
+  let layoutId = 'auto';   // 'auto' or an id from LAYOUTS
+  let slots = [];          // custom layout only: stream key (or null) for each spot
+  let fillScreen = false;
   const keyOf = (s) => `${s.t}:${s.id}`;
+  const isCustom = () => layoutId !== 'auto';
+  const byKey = (key) => streams.find((s) => s.key === key);
+
+  /** Streams in the order they appear on screen. */
+  function visualOrder() {
+    return isCustom() ? slots.filter(Boolean) : streams.map((s) => s.key);
+  }
 
   function add(stream, { quiet = false } = {}) {
     const key = keyOf(stream);
-    if (streams.some((s) => s.key === key)) {
+    if (byKey(key)) {
       if (!quiet) toast(`${TYPES[stream.t].label} ${stream.id} is already open`);
-      return false;
+      return null;
     }
     const s = { ...stream, key, muted: true };
     s.el = buildTile(s);
     streams.push(s);
     stage.appendChild(s.el);
+    return s;
+  }
+
+  /** Put a newly added stream into the first empty spot. Returns false if there was none. */
+  function placeNew(key) {
+    if (!isCustom()) return true;
+    const i = slots.indexOf(null);
+    if (i < 0) return false;
+    slots[i] = key;
     return true;
   }
 
   function remove(key) {
-    const i = streams.findIndex((s) => s.key === key);
-    if (i < 0) return;
-    streams[i].el.remove();
-    streams.splice(i, 1);
+    const s = byKey(key);
+    if (!s) return;
+    s.el.remove();
+    streams = streams.filter((x) => x !== s);
     if (focusKey === key) focusKey = null;
+    if (isCustom()) slots = slots.map((k) => (k === key ? null : k));
     update();
   }
 
+  /** Drag & drop: put fromKey where toKey is (swap in a custom layout). */
   function move(fromKey, toKey) {
-    const from = streams.findIndex((s) => s.key === fromKey);
-    const to = streams.findIndex((s) => s.key === toKey);
-    if (from < 0 || to < 0 || from === to) return;
-    const [s] = streams.splice(from, 1);
-    streams.splice(to, 0, s);
+    if (fromKey === toKey) return;
+    if (isCustom()) {
+      const a = slots.indexOf(fromKey), b = slots.indexOf(toKey);
+      if (a < 0 || b < 0) return;
+      [slots[a], slots[b]] = [slots[b], slots[a]];
+    } else {
+      const from = streams.findIndex((s) => s.key === fromKey);
+      const to = streams.findIndex((s) => s.key === toKey);
+      if (from < 0 || to < 0) return;
+      const [s] = streams.splice(from, 1);
+      streams.splice(to, 0, s);
+    }
+    update();
+  }
+
+  /** Drag & drop onto an empty spot in a custom layout. */
+  function moveToSlot(key, index) {
+    const from = slots.indexOf(key);
+    if (from < 0 || slots[index]) return;
+    slots[from] = null;
+    slots[index] = key;
+    update();
+  }
+
+  /**
+   * Switch layout. With placeKey + zone, that stream goes into that exact spot
+   * (swapping with whatever was there when the layout stays the same).
+   */
+  function setLayout(id, { placeKey = null, zone = -1 } = {}) {
+    const order = visualOrder();
+    if (id === 'auto') {
+      if (!isCustom()) return;
+      // Keep the on-screen order; anything not on screen yet goes last
+      const rank = (k) => { const i = order.indexOf(k); return i < 0 ? Infinity : i; };
+      streams.sort((a, b) => rank(a.key) - rank(b.key));
+      layoutId = 'auto';
+      slots = [];
+      update();
+      return;
+    }
+    const L = LAYOUT_BY_ID[id];
+    if (!L) return;
+    if (order.length > L.zones.length) {
+      toast(`That layout has ${L.zones.length} spots but you have ${order.length} streams`, true);
+      return;
+    }
+    let next;
+    if (placeKey && id === layoutId) {
+      next = [...slots];
+      const from = next.indexOf(placeKey);
+      [next[from], next[zone]] = [next[zone], next[from]];
+    } else {
+      next = L.zones.map(() => null);
+      if (placeKey) next[zone] = placeKey;
+      let i = 0;
+      for (const k of order) {
+        if (k === placeKey) continue;
+        while (next[i]) i++;
+        next[i] = k;
+      }
+    }
+    layoutId = id;
+    slots = next;
+    focusKey = null;
     update();
   }
 
@@ -188,6 +309,8 @@
     streams.forEach((s) => s.el.remove());
     streams = [];
     focusKey = null;
+    layoutId = 'auto';
+    slots = [];
     update();
   }
 
@@ -195,6 +318,7 @@
   const ICONS = {
     focus: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
     unfocus: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+    layout: '<rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/>',
     muted: '<path d="M11 5L6 9H3v6h3l5 4zM22 9l-6 6M16 9l6 6"/>',
     sound: '<path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13"/>',
     reload: '<path d="M21 12a9 9 0 11-3-6.7L21 8M21 3v5h-5"/>',
@@ -217,6 +341,27 @@
     return TYPES[s.t].embed(s.id, s.muted);
   }
 
+  // Drag & drop. Tiles never move in the page (that would reload the
+  // players); only their position on screen changes.
+  const DRAG_TYPE = 'text/x-mv-key';
+
+  function makeDropTarget(el, onDrop) {
+    el.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.classList.add('drop-target');
+    });
+    el.addEventListener('dragleave', (e) => {
+      if (!el.contains(e.relatedTarget)) el.classList.remove('drop-target');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('drop-target');
+      onDrop(e.dataTransfer.getData(DRAG_TYPE));
+    });
+  }
+
   function buildTile(s) {
     const type = TYPES[s.t];
     const el = document.createElement('div');
@@ -226,7 +371,6 @@
     const frame = document.createElement('iframe');
     frame.src = embedUrl(s);
     frame.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-    frame.allowFullscreen = true;
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.title = `${type.label}: ${s.id}`;
     s.frame = frame;
@@ -237,13 +381,16 @@
     const name = document.createElement('div');
     name.className = 'tile-name';
     name.draggable = true;
-    name.title = 'Drag to move';
+    name.title = 'Drag onto another stream to swap places';
     const dot = document.createElement('span');
     dot.className = `dot ${type.dot}`;
     const label = document.createElement('span');
     label.textContent = s.id;
     name.append(dot, label);
     bar.append(name);
+
+    const layoutBtn = iconButton('layout', 'Choose this stream\'s spot', () => openMenu(layoutBtn, s.key));
+    bar.append(layoutBtn);
 
     const focusBtn = iconButton('focus', 'Make big', () => {
       focusKey = focusKey === s.key ? null : s.key;
@@ -269,10 +416,8 @@
       iconButton('close', 'Remove', () => remove(s.key)),
     );
 
-    // Drag & drop reordering. Tiles never move in the DOM (that would reload
-    // the players); only their position changes.
     name.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/x-mv-key', s.key);
+      e.dataTransfer.setData(DRAG_TYPE, s.key);
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setDragImage(name, 10, 10);
       stage.classList.add('dragging');
@@ -281,26 +426,13 @@
       stage.classList.remove('dragging');
       document.querySelectorAll('.drop-target').forEach((t) => t.classList.remove('drop-target'));
     });
-    el.addEventListener('dragover', (e) => {
-      if (!e.dataTransfer.types.includes('text/x-mv-key')) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      el.classList.add('drop-target');
-    });
-    el.addEventListener('dragleave', (e) => {
-      if (!el.contains(e.relatedTarget)) el.classList.remove('drop-target');
-    });
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      el.classList.remove('drop-target');
-      move(e.dataTransfer.getData('text/x-mv-key'), s.key);
-    });
+    makeDropTarget(el, (fromKey) => move(fromKey, s.key));
 
     el.append(frame, bar);
     return el;
   }
 
-  // ---------- Layout ----------
+  // ---------- Positioning ----------
   function bestGrid(n, W, H) {
     let best = null;
     for (let cols = 1; cols <= n; cols++) {
@@ -311,62 +443,107 @@
     return best;
   }
 
-  function placeGrid(items, x, y, W, H, out) {
-    const n = items.length;
+  function placeGrid(keys, x, y, W, H, out) {
+    const n = keys.length;
     if (!n || W <= 0 || H <= 0) return;
     const g = bestGrid(n, W, H);
     const top = y + (H - (g.rows * g.h + (g.rows - 1) * GAP)) / 2;
-    items.forEach((it, i) => {
+    keys.forEach((k, i) => {
       const r = Math.floor(i / g.cols);
       const c = i % g.cols;
       const inRow = Math.min(g.cols, n - r * g.cols);
       const rowW = inRow * g.w + (inRow - 1) * GAP;
-      out.set(it, { x: x + (W - rowW) / 2 + c * (g.w + GAP), y: top + r * (g.h + GAP), w: g.w, h: g.h });
+      out.set(k, { x: x + (W - rowW) / 2 + c * (g.w + GAP), y: top + r * (g.h + GAP), w: g.w, h: g.h });
     });
   }
 
-  function fit(W, H) {
-    const w = Math.min(W, H * AR);
-    return { w, h: w / AR };
+  function fit(W, H, aspect = AR) {
+    const w = Math.min(W, H * aspect);
+    return { w, h: w / aspect };
   }
 
-  function computeLayout(W, H) {
+  /** Auto layout: equal 16:9 tiles, or one big + the rest in a strip. */
+  function autoRects(W, H) {
     const out = new Map();
-    const main = streams.find((s) => s.key === focusKey);
-    if (!main || streams.length === 1) {
-      placeGrid(streams, 0, 0, W, H, out);
+    const keys = streams.map((s) => s.key);
+    if (!byKey(focusKey) || keys.length === 1) {
+      placeGrid(keys, 0, 0, W, H, out);
       return out;
     }
-    const rest = streams.filter((s) => s !== main);
-
-    // Option A: big player on the left, others in a column on the right.
-    // Option B: big player on top, others in a row below. Keep whichever gives the big one more room.
+    const rest = keys.filter((k) => k !== focusKey);
+    // Big one on the left with a column on the right, or on top with a row below:
+    // whichever leaves the big one more room.
     const a = fit(W * 0.78, H);
     const b = fit(W, H * 0.75);
     if (a.w >= b.w) {
-      out.set(main, { x: 0, y: (H - a.h) / 2, ...a });
+      out.set(focusKey, { x: 0, y: (H - a.h) / 2, ...a });
       placeGrid(rest, a.w + GAP, 0, W - a.w - GAP, H, out);
     } else {
-      out.set(main, { x: (W - b.w) / 2, y: 0, ...b });
+      out.set(focusKey, { x: (W - b.w) / 2, y: 0, ...b });
       placeGrid(rest, 0, b.h + GAP, W, H - b.h - GAP, out);
     }
     return out;
   }
 
+  /** Custom layout: one rect per spot (index), whether filled or empty. */
+  function zoneRects(W, H) {
+    const L = LAYOUT_BY_ID[layoutId];
+    const box = fillScreen ? { w: W, h: H } : fit(W, H, L.aspect);
+    const bx = (W - box.w) / 2, by = (H - box.h) / 2;
+    const half = GAP / 2;
+    return L.zones.map(([x, y, w, h]) => ({
+      x: bx + x * box.w + half,
+      y: by + y * box.h + half,
+      w: w * box.w - GAP,
+      h: h * box.h - GAP,
+    }));
+  }
+
+  function setRect(el, r) {
+    Object.assign(el.style, {
+      left: `${Math.round(r.x)}px`,
+      top: `${Math.round(r.y)}px`,
+      width: `${Math.round(r.w)}px`,
+      height: `${Math.round(r.h)}px`,
+    });
+  }
+
+  let emptySpots = [];
+
+  function emptySpot(index) {
+    const el = document.createElement('div');
+    el.className = 'empty-spot';
+    el.innerHTML = '<b>Empty spot</b><span>Paste a link above or drag a stream here</span>';
+    makeDropTarget(el, (key) => moveToSlot(key, index));
+    return el;
+  }
+
   function layout() {
     const W = stage.clientWidth;
     const H = stage.clientHeight;
-    const rects = computeLayout(W, H);
-    for (const s of streams) {
-      const r = rects.get(s);
-      if (!r) continue;
-      Object.assign(s.el.style, {
-        left: `${Math.round(r.x)}px`,
-        top: `${Math.round(r.y)}px`,
-        width: `${Math.round(r.w)}px`,
-        height: `${Math.round(r.h)}px`,
+    emptySpots.forEach((el) => el.remove());
+    emptySpots = [];
+    stage.classList.toggle('custom', isCustom());
+
+    if (isCustom()) {
+      zoneRects(W, H).forEach((r, i) => {
+        const s = byKey(slots[i]);
+        if (s) {
+          setRect(s.el, r);
+        } else {
+          const el = emptySpot(i);
+          setRect(el, r);
+          stage.appendChild(el);
+          emptySpots.push(el);
+        }
       });
-      const focused = s.key === focusKey && streams.length > 1;
+    } else {
+      const rects = autoRects(W, H);
+      for (const s of streams) if (rects.has(s.key)) setRect(s.el, rects.get(s.key));
+    }
+
+    for (const s of streams) {
+      const focused = !isCustom() && s.key === focusKey && streams.length > 1;
       s.el.classList.toggle('focused', focused);
       const fb = s.el.querySelector('.focus-btn');
       fb.innerHTML = svg(focused ? 'unfocus' : 'focus');
@@ -375,12 +552,120 @@
     }
   }
 
+  // ---------- Layout menu ----------
+  const menu = $('#layoutMenu');
+  const menuTitle = $('#layoutMenuTitle');
+  const menuHint = $('#layoutMenuHint');
+  const layoutGrid = $('#layoutGrid');
+  const fillToggle = $('#fillToggle');
+  let menuKey = null;      // which stream the menu is placing, or null for "whole layout"
+  let menuAnchor = null;
+
+  function zoneStyle([x, y, w, h]) {
+    // 4px padding inside the preview card, 1.5px gap between zones
+    return `left:calc(4px + (100% - 8px) * ${x} + 1.5px);top:calc(4px + (100% - 8px) * ${y} + 1.5px);` +
+           `width:calc((100% - 8px) * ${w} - 3px);height:calc((100% - 8px) * ${h} - 3px)`;
+  }
+
+  function buildMenu() {
+    for (const L of LAYOUTS) {
+      const card = document.createElement('div');
+      card.className = 'lay';
+      card.dataset.id = L.id;
+      L.zones.forEach((z, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'zone';
+        b.style.cssText = zoneStyle(z);
+        b.setAttribute('aria-label', `${L.zones.length} stream layout, spot ${i + 1}`);
+        b.addEventListener('click', () => {
+          const key = menuKey;
+          closeMenu();
+          setLayout(L.id, key ? { placeKey: key, zone: i } : {});
+        });
+        card.appendChild(b);
+      });
+      layoutGrid.appendChild(card);
+    }
+  }
+
+  function refreshMenu() {
+    const n = streams.length;
+    const name = menuKey ? byKey(menuKey)?.id : null;
+    menu.classList.toggle('placing', !!menuKey);
+    menuTitle.textContent = name ? `Move ${name} to…` : 'Layout';
+    menuHint.textContent = name
+      ? 'Click the spot where this stream should go.'
+      : 'Pick a layout. Then use a stream\'s layout button to choose its exact spot, or drag names to swap.';
+    $('#autoLayout').classList.toggle('current', !isCustom());
+    $('#autoLayout').hidden = !!menuKey;
+    layoutGrid.querySelectorAll('.lay').forEach((card) => {
+      const L = LAYOUT_BY_ID[card.dataset.id];
+      const tooSmall = L.zones.length < n;
+      card.classList.toggle('disabled', tooSmall);
+      card.classList.toggle('current', L.id === layoutId);
+      card.title = tooSmall ? `Only ${L.zones.length} spots (you have ${n} streams)` : '';
+      card.querySelectorAll('.zone').forEach((z, i) => {
+        z.disabled = tooSmall;
+        z.classList.toggle('here', !!menuKey && L.id === layoutId && slots[i] === menuKey);
+      });
+    });
+    fillToggle.checked = fillScreen;
+  }
+
+  function positionMenu() {
+    if (menu.hidden || !menuAnchor) return;
+    const a = menuAnchor.getBoundingClientRect();
+    const m = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(a.right - m.width, innerWidth - m.width - 8));
+    let top = a.bottom + 6;
+    if (top + m.height > innerHeight - 8) top = Math.max(8, a.top - m.height - 6);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  function openMenu(anchor, key = null) {
+    if (!menu.hidden && menuAnchor === anchor) return closeMenu();
+    menuAnchor = anchor;
+    menuKey = key;
+    refreshMenu();
+    menu.hidden = false;
+    positionMenu();
+    menu.querySelector('.zone:not(:disabled), #autoLayout:not([hidden])')?.focus({ preventScroll: true });
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    menuAnchor = null;
+    menuKey = null;
+  }
+
+  buildMenu();
+  $('#layoutBtn').addEventListener('click', (e) => openMenu(e.currentTarget));
+  $('#autoLayout').addEventListener('click', () => { closeMenu(); setLayout('auto'); });
+  fillToggle.addEventListener('change', () => {
+    fillScreen = fillToggle.checked;
+    try { localStorage.setItem('mv-fill', fillScreen ? '1' : ''); } catch {}
+    layout();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!menu.hidden && !menu.contains(e.target) && !menuAnchor?.contains(e.target)) closeMenu();
+  });
+  // Clicking into a video moves focus to its frame, which the page sees as a blur
+  window.addEventListener('blur', () => { if (!menu.hidden) closeMenu(); });
+
   // ---------- Page address (shareable link) ----------
-  // Format: #tw:name/k:name/yt:VIDEOID/s:id   (a "*" in front marks the big one)
+  // Auto:   #tw:name/k:name/yt:VIDEOID/s:id    ("*" in front marks the big one)
+  // Custom: #@4r/tw:name/-/k:name/s:id         (layout id first; "-" is an empty spot)
   let writingHash = false;
 
   function writeHash() {
-    const h = streams.map((s) => (s.key === focusKey ? '*' : '') + s.key).join('/');
+    let h = '';
+    if (isCustom()) {
+      h = ['@' + layoutId, ...slots.map((k) => k || '-')].join('/');
+    } else if (streams.length) {
+      h = streams.map((s) => (s.key === focusKey ? '*' : '') + s.key).join('/');
+    }
     const url = location.pathname + location.search + (h ? '#' + h : '');
     writingHash = true;
     history.replaceState(null, '', url);
@@ -391,21 +676,25 @@
     let h = location.hash.replace(/^#\/?/, '');
     try { h = decodeURIComponent(h); } catch {}
     const tokens = h.split('/').map((t) => t.trim()).filter(Boolean);
-    const wanted = [];
+    let layout = null;
+    if (tokens[0]?.startsWith('@')) layout = tokens.shift().slice(1);
+    const entries = [];   // stream, or null for an empty spot
     let focus = null;
     for (const tok of tokens) {
+      if (tok === '-') { entries.push(null); continue; }
       const star = tok.startsWith('*');
       const r = parse(star ? tok.slice(1) : tok);
       if (r && !r.error) {
-        wanted.push(r);
+        entries.push(r);
         if (star) focus = keyOf(r);
       }
     }
-    return { wanted, focus };
+    return { layout, entries, focus };
   }
 
   function loadFromHash() {
-    const { wanted, focus } = readHash();
+    const { layout: id, entries, focus } = readHash();
+    const wanted = entries.filter(Boolean);
     const wantedKeys = wanted.map(keyOf);
     // Keep players that are still wanted (so they don't reload), drop the rest
     streams.filter((s) => !wantedKeys.includes(s.key)).forEach((s) => s.el.remove());
@@ -413,17 +702,55 @@
     wanted.forEach((w) => add(w, { quiet: true }));
     streams.sort((x, y) => wantedKeys.indexOf(x.key) - wantedKeys.indexOf(y.key));
     focusKey = focus;
+
+    const L = id && LAYOUT_BY_ID[id];
+    if (L && wanted.length && wanted.length <= L.zones.length) {
+      layoutId = id;
+      const seen = new Set();
+      slots = L.zones.map((_, i) => {
+        const k = entries[i] ? keyOf(entries[i]) : null;
+        if (!k || seen.has(k)) return null;
+        seen.add(k);
+        return k;
+      });
+      // Anything that didn't fit in its listed spot goes into the first free one
+      for (const s of streams) if (!seen.has(s.key)) slots[slots.indexOf(null)] = s.key;
+    } else {
+      layoutId = 'auto';
+      slots = [];
+    }
     update();
   }
 
   function update() {
+    if (!streams.length && isCustom()) { layoutId = 'auto'; slots = []; }
     empty.hidden = streams.length > 0;
     document.title = streams.length ? `Multi Viewer (${streams.length})` : 'Multi Viewer';
     layout();
     writeHash();
+    if (!menu.hidden) { refreshMenu(); positionMenu(); }
   }
 
-  // ---------- UI ----------
+  // ---------- Theme ----------
+  const themeBtn = $('#themeBtn');
+  const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  const MOON = '<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>';
+
+  function showThemeButton() {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    themeBtn.innerHTML = `<svg viewBox="0 0 24 24">${dark ? SUN : MOON}</svg>`;
+    themeBtn.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+    themeBtn.setAttribute('aria-label', themeBtn.title);
+  }
+  themeBtn.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('mv-theme', next); } catch {}
+    showThemeButton();
+  });
+  showThemeButton();
+
+  // ---------- Other UI ----------
   let toastTimer;
   function toast(msg, isError = false) {
     toastEl.textContent = msg;
@@ -438,17 +765,26 @@
     const pieces = input.value.split(/[\s,]+/).filter(Boolean);
     const errors = [];
     let added = 0;
+    let overflowed = false;
     for (const p of pieces) {
       const r = parse(p);
       if (!r) continue;
-      if (r.error) errors.push(r.error);
-      else if (add(r)) added++;
+      if (r.error) { errors.push(r.error); continue; }
+      const s = add(r);
+      if (!s) continue;
+      added++;
+      if (!placeNew(s.key)) {
+        // No free spot in the custom layout: fall back to Auto so nothing is hidden
+        setLayout('auto');
+        overflowed = true;
+      }
     }
     if (added) update();
     if (errors.length) {
       toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} more)` : ''), true);
     } else {
       input.value = '';
+      if (overflowed) toast('No empty spot left, so the layout switched to Auto. Pick a bigger layout to arrange them.');
     }
   });
 
@@ -456,7 +792,7 @@
     if (!streams.length) return toast('Add a stream first');
     try {
       await navigator.clipboard.writeText(location.href);
-      toast('Link copied. Anyone who opens it sees these streams.');
+      toast('Link copied. Anyone who opens it sees these streams in this layout.');
     } catch {
       prompt('Copy this link:', location.href);
     }
@@ -469,19 +805,23 @@
   function setBarHidden(hidden) {
     document.body.classList.toggle('bar-hidden', hidden);
     try { localStorage.setItem('mv-bar-hidden', hidden ? '1' : ''); } catch {}
+    closeMenu();
     layout();
   }
   $('#hideBtn').addEventListener('click', () => setBarHidden(true));
   $('#showBar').addEventListener('click', () => setBarHidden(false));
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) { closeMenu(); return; }
     const typing = e.target instanceof Element && e.target.closest('input, textarea');
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'h' || e.key === 'H') setBarHidden(!document.body.classList.contains('bar-hidden'));
+    if (e.key === 'l' || e.key === 'L') openMenu($('#layoutBtn'));
     if (e.key === 'Escape' && focusKey) { focusKey = null; update(); }
   });
 
   window.addEventListener('hashchange', () => { if (!writingHash) loadFromHash(); });
+  window.addEventListener('resize', positionMenu);
   new ResizeObserver(layout).observe(stage);
 
   // Twitch and YouTube refuse to play when the page is opened as a plain file
@@ -491,7 +831,10 @@
     n.textContent = 'Opened as a local file: Twitch and YouTube won\'t play here. Use the GitHub Pages link or run a local web server.';
   }
 
-  try { if (localStorage.getItem('mv-bar-hidden')) document.body.classList.add('bar-hidden'); } catch {}
+  try {
+    if (localStorage.getItem('mv-bar-hidden')) document.body.classList.add('bar-hidden');
+    fillScreen = !!localStorage.getItem('mv-fill');
+  } catch {}
   loadFromHash();
   if (!streams.length) input.focus();
 })();

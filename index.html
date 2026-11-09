@@ -7,6 +7,15 @@
   <meta name="description" content="Watch YouTube, Twitch, Kick and SOOP streams side by side. Video only, no chat.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Crect x='6' y='8' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='17' y='8' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='6' y='17' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3Crect x='17' y='17' width='9' height='7' rx='1.5' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Set the theme before the page draws, so it doesn't flash the wrong colors
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('mv-theme'); } catch (e) {}
+      if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <header id="bar">
@@ -17,8 +26,13 @@
       <button type="submit" class="primary">Add</button>
     </form>
     <div class="actions">
+      <button id="layoutBtn" type="button" title="Choose how the videos are arranged (L)">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
+        Layout
+      </button>
       <button id="shareBtn" type="button" title="Copy a link that opens this exact set of streams">Copy link</button>
       <button id="clearBtn" type="button" title="Remove all streams">Clear</button>
+      <button id="themeBtn" type="button" class="icon"></button>
       <button id="hideBtn" type="button" class="icon" title="Hide this bar (more room for video)" aria-label="Hide bar">
         <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
       </button>
@@ -34,7 +48,8 @@
   <main id="stage">
     <section id="empty">
       <h1>Watch streams side by side</h1>
-      <p>Paste a link above. Video only, no chat. Hover a stream for controls; drag its name to reorder.</p>
+      <p>Paste a link above. Video only, no chat. Hover a stream for controls; drag its name to swap places,
+        or use <b>Layout</b> to arrange them your way.</p>
       <ul class="examples">
         <li><span class="dot tw"></span><b>Twitch</b><code>twitch.tv/name</code><code>twitch.tv/videos/123</code></li>
         <li><span class="dot k"></span><b>Kick</b><code>kick.com/name</code></li>
@@ -45,6 +60,20 @@
         The page address updates as you add streams, so <b>Copy link</b> shares your whole layout.</p>
     </section>
   </main>
+
+  <div id="layoutMenu" class="menu" role="dialog" aria-labelledby="layoutMenuTitle" hidden>
+    <div class="menu-head">
+      <span id="layoutMenuTitle">Layout</span>
+      <label title="Stretch the layout over the whole screen (videos get black bars)">
+        <input id="fillToggle" type="checkbox"> Fill screen
+      </label>
+    </div>
+    <p id="layoutMenuHint" class="menu-hint"></p>
+    <button id="autoLayout" type="button" class="lay-auto">
+      <b>Auto</b><span>Fit every stream, equal sizes</span>
+    </button>
+    <div id="layoutGrid" class="lay-grid"></div>
+  </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
 

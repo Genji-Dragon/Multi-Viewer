@@ -7,13 +7,19 @@ Live site (after GitHub Pages is turned on): https://genji-dragon.github.io/Mult
 ## How to use
 
 1. Paste one or more links into the box at the top and press **Add**. You can paste several at once, separated by spaces or new lines.
-2. Hover a stream to get its controls:
-   - **Drag the name** onto another stream to swap places
-   - **Make big**: one large player with the rest in a strip (press `Esc` to go back to the grid)
+2. Press **Layout** (or `L`) to choose how the videos are arranged, like Windows Snap Layouts:
+   - **Auto** fits every stream at equal size (the default).
+   - The other options are fixed layouts: side by side, one big plus a column, 2×2, 3×3 and more. Layouts with fewer spots than you have streams are greyed out.
+   - **Fill screen** stretches the layout over the whole window. When it's off, the layout is sized so each video is as close to 16:9 as possible.
+3. Hover a stream to get its controls:
+   - **Layout button**: pick the exact spot this stream goes in (it swaps with whatever is there)
+   - **Drag the name** onto another stream to swap places, or onto an empty spot to move it there
+   - **Make big** (Auto layout only): one large player with the rest in a strip (press `Esc` to go back to the grid)
    - **Unmute/Mute**: reloads that player with or without sound (all streams start muted so they can autoplay)
    - **Reload**, **Open on site**, **Remove**
-3. Press **Copy link** to share your current layout. The page address always holds your streams, so bookmarks work too.
-4. Press `H` (or the arrow button) to hide the top bar.
+4. Press **Copy link** to share your current streams and layout. The page address always holds them, so bookmarks work too.
+5. Press the sun/moon button to switch between light and dark mode (it remembers your choice).
+6. Press `H` (or the arrow button) to hide the top bar.
 
 ## Supported links
 
@@ -31,6 +37,9 @@ YouTube channel links (`youtube.com/@name`) can't be embedded: YouTube only embe
 `https://genji-dragon.github.io/Multi-Viewer/#tw:name/k:name/yt:VIDEO_ID/s:id`
 
 A `*` in front of one entry (for example `*tw:name`) opens it as the big player.
+
+For a fixed layout, the layout id comes first and `-` marks an empty spot, for example
+`#@4r/k:name/tw:name/yt:VIDEO_ID/-` (one big on the left, three stacked on the right).
 
 ## Running it locally
 
